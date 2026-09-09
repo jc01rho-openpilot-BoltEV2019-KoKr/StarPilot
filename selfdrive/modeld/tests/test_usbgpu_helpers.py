@@ -1,4 +1,5 @@
 import io
+import struct
 from types import MethodType
 from types import SimpleNamespace
 
@@ -152,6 +153,42 @@ def test_chestnut_telemetry_is_bounded_when_amd_is_unavailable(monkeypatch):
   assert not message.valid
 
 
+def test_chestnut_power_telemetry_works_before_amd_initializes(monkeypatch):
+  class FakePubMaster:
+    def __init__(self):
+      self.sent = []
+
+    def send(self, service, message):
+      self.sent.append((service, message))
+
+  class FakeHandle:
+    def controlRead(self, *_args, **_kwargs):
+      return struct.pack("<Hh?", 12100, 850, True)
+
+    def close(self):
+      pass
+
+  class FakeContext:
+    def openByVendorIDAndProductID(self, *_args, **_kwargs):
+      return FakeHandle()
+
+    def close(self):
+      pass
+
+  publisher = FakePubMaster()
+  monkeypatch.setattr(modeld, "Device", SimpleNamespace(_opened_devices=set()))
+  monkeypatch.setattr(modeld.usb1, "USBContext", FakeContext)
+
+  telemetry = modeld.ChestnutState(publisher, big=False)
+  telemetry.send()
+
+  _, message = publisher.sent[0]
+  assert message.valid
+  assert message.chestnutState.supplyVoltage == 12100
+  assert message.chestnutState.supplyCurrent == 850
+  assert message.chestnutState.supplyFault
+
+
 def test_tinygrad_disk_cache_connection_is_closed_between_models(monkeypatch):
   import tinygrad.helpers as tinygrad_helpers
 
@@ -169,6 +206,41 @@ def test_tinygrad_disk_cache_connection_is_closed_between_models(monkeypatch):
 
   assert connection.closed
   assert tinygrad_helpers._db_connection is None
+
+
+def test_tinygrad_thread_local_cache_holder_survives_cleanup(monkeypatch):
+  import threading
+  import tinygrad.helpers as tinygrad_helpers
+
+  class FakeConnection:
+    def __init__(self):
+      self.closed = False
+
+    def close(self):
+      self.closed = True
+
+  holder = threading.local()
+  connection = FakeConnection()
+  holder.conn = connection
+  monkeypatch.setattr(tinygrad_helpers, "_db_connection", holder)
+
+  modeld._close_tinygrad_disk_cache_connection()
+
+  assert connection.closed
+  assert tinygrad_helpers._db_connection is holder
+  assert not hasattr(holder, "conn")
+
+
+def test_tinygrad_empty_thread_local_cache_holder_is_safe(monkeypatch):
+  import threading
+  import tinygrad.helpers as tinygrad_helpers
+
+  holder = threading.local()
+  monkeypatch.setattr(tinygrad_helpers, "_db_connection", holder)
+
+  modeld._close_tinygrad_disk_cache_connection()
+
+  assert tinygrad_helpers._db_connection is holder
 
 
 def test_external_gpu_load_finishes_before_native_model_can_start(monkeypatch):

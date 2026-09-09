@@ -73,7 +73,7 @@ class StarPilotCard:
     self._controller_action_counters = {
       key: self._get_controller_action_counter(counter)
       for key, counter in CONTROLLER_ACTION_COUNTERS.items()
-      if counter != "WheelButtonBookmarkCounter"
+      if key in (CONTROLLER_ACTION_FORCE_COAST, CONTROLLER_ACTION_PULSE_AND_GLIDE, CONTROLLER_ACTION_TOGGLE_AOL)
     }
     self.modePressed_previously = False
     self.mode_counter = 0
@@ -148,8 +148,8 @@ class StarPilotCard:
     self._controller_action_counters[key] = current
     return max(0, current - previous)
 
-  def _toggle_controller_aol(self, carState, starpilot_toggles, button_aol_supported):
-    if not button_aol_supported or not getattr(starpilot_toggles, "always_on_lateral", False):
+  def _toggle_controller_aol(self, carState, starpilot_toggles):
+    if not self.always_on_lateral_supported or not getattr(starpilot_toggles, "always_on_lateral", False):
       return False
     if self.hyundai_aol_needs_engagement:
       self.hyundai_aol_ready = True
@@ -158,7 +158,7 @@ class StarPilotCard:
       self.pause_lateral = not self.always_on_lateral_allowed
     return True
 
-  def _handle_controller_actions(self, carState, sm, starpilot_toggles, button_aol_supported):
+  def _handle_controller_actions(self, carState, sm, starpilot_toggles):
     force_coast_count = self._pending_controller_action_count(
       CONTROLLER_ACTION_FORCE_COAST
     )
@@ -176,7 +176,7 @@ class StarPilotCard:
       CONTROLLER_ACTION_TOGGLE_AOL
     )
     if aol_count % 2:
-      self._toggle_controller_aol(carState, starpilot_toggles, button_aol_supported)
+      self._toggle_controller_aol(carState, starpilot_toggles)
 
   def _handle_favorite_traffic_mode_action(self, sm):
     counter = self.params_memory.get_int(FAVORITE_ACTION_TRAFFIC_MODE_COUNTER)
@@ -414,7 +414,7 @@ class StarPilotCard:
         else:
           self.handle_button_event("lkas", sm, starpilot_toggles)
 
-    self._handle_controller_actions(carState, sm, starpilot_toggles, button_aol_supported)
+    self._handle_controller_actions(carState, sm, starpilot_toggles)
 
     if getattr(starpilot_toggles, "has_canfd_media_buttons", False):
       if starpilotCarState.modePressed:

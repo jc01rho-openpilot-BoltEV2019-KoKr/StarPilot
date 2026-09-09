@@ -1,8 +1,5 @@
 // Single source of truth for page-in-page embeds of the classic Galaxy SPA.
-// Every embed (ToolEmbed, Home dashboard, Tuning, Navigation maps/keys/speeds,
-// SystemTools toggles, Logs troubleshoot) renders through this component so the
-// classic page always gets: an `embedded=1` marker, sidebar-hide styles, and
-// optional navigation forwarding back to the mobile app.
+// Ideally, implement new tools Vue based instead of Arrow.
 export const GalaxyEmbed = {
   name: "GalaxyEmbed",
   props: {

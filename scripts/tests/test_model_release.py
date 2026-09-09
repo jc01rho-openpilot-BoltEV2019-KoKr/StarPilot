@@ -79,18 +79,19 @@ def test_runtime_scan_excludes_model_weights_but_flags_runtime_code():
 
 
 def test_update_manifest_replaces_one_entry(tmp_path: Path):
-  manifest = tmp_path / "model_names_v24.json"
+  manifest = tmp_path / "model_names_v25.json"
   manifest.write_text(json.dumps({"models": [{"id": "old"}]}) + "\n")
   info = parse_pasted_release(RELEASE_TEXT, "bmrlnapv4", "v16")
   path = update_manifest(
     tmp_path,
     info,
-    {"size": 123, "sha256": "a" * 64},
-    "v24",
+    {"size": 123, "sha256": "a" * 64, "chunk_count": 2},
+    "v25",
   )
   payload = json.loads(path.read_text())
   assert len(payload["models"]) == 2
   entry = payload["models"][1]
   assert entry["id"] == "bmrlnapv4"
   assert entry["artifact_size"] == 123
+  assert entry["artifact_chunk_count"] == 2
   assert entry["uses_external_gpu"]

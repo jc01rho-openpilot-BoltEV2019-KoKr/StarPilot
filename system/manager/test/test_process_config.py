@@ -4,6 +4,7 @@ import pytest
 
 from cereal import car
 from opendbc.car.ford.values import CAR as FORD_CAR
+import openpilot.system.manager.process_config as process_config
 from openpilot.system.manager.process_config import (
   allow_uploads,
   bluetooth_enabled,
@@ -46,6 +47,31 @@ def test_allow_uploads(started, no_uploads, no_onroad_uploads, always_allow_uplo
 
 def test_uploader_runs_at_background_priority():
   assert managed_processes["uploader"].nice == 19
+
+
+def test_mapd_runs_onroad_or_during_offroad_map_transfer(monkeypatch):
+  class MemoryParams:
+    values = {}
+
+    def __init__(self, *, memory=False):
+      assert memory
+
+    def get_bool(self, key):
+      return self.values.get(key, False)
+
+  monkeypatch.setattr(process_config, "Params", MemoryParams)
+  params = object()
+  CP = car.CarParams.new_message()
+  toggles = SimpleNamespace()
+
+  assert process_config.run_mapd(True, params, CP, toggles)
+  assert not process_config.run_mapd(False, params, CP, toggles)
+
+  MemoryParams.values["DownloadMaps"] = True
+  assert process_config.run_mapd(False, params, CP, toggles)
+
+  MemoryParams.values = {"DownloadMaps": False, "CancelDownloadMaps": True}
+  assert process_config.run_mapd(False, params, CP, toggles)
 
 
 @pytest.mark.parametrize("enabled", [False, True])

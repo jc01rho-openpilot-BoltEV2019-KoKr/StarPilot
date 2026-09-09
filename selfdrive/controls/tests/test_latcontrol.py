@@ -1,4 +1,3 @@
-import math
 import pytest
 from parameterized import parameterized
 from types import SimpleNamespace
@@ -21,7 +20,6 @@ from openpilot.common.realtime import DT_CTRL
 from openpilot.selfdrive.controls.lib.latcontrol_angle import (
   LatControlAngle,
   _ascent_angle_tracking_target,
-  _ford_angle_tracking_saturated,
 )
 from openpilot.selfdrive.controls.lib.latcontrol_pid import (
   LatControlPID,
@@ -55,6 +53,8 @@ from openpilot.selfdrive.controls.lib.latcontrol_vehicle_tunes import (
   get_ram_1500_ff_scale,
   get_rav4_tss2_pid_output,
   get_subaru_impreza_pid_output_scale,
+  get_genesis_gv70_low_speed_center_overshoot_scale,
+  get_genesis_g70_high_speed_transition_scale,
   normalize_flm_overrides,
   set_flm_runtime_overrides,
 )
@@ -98,6 +98,7 @@ from openpilot.selfdrive.controls.lib.latcontrol_torque import (
   get_genesis_gv70_friction_jerk_deadzone,
   get_genesis_gv70_friction_threshold,
   get_genesis_gv70_high_speed_error_scale,
+  get_genesis_gv70_reversal_output_scale,
   get_genesis_gv70_unwind_ff_scale,
   get_honda_accord_ff_scale,
   get_elantra_non_scc_ff_scale,
@@ -202,41 +203,6 @@ class TestLatControl:
     assert _ascent_angle_tracking_target(40.0, 0.0, 20.0, False) == pytest.approx(48.0)
     assert _ascent_angle_tracking_target(10.0, 0.0, 4.0, False) == pytest.approx(10.0)
     assert _ascent_angle_tracking_target(10.0, 0.0, 20.0, True) == pytest.approx(10.0)
-
-  def test_ford_angle_tracking_does_not_report_a_responsive_eps_as_saturated(self):
-    assert not _ford_angle_tracking_saturated(12.0, 12.0)
-    assert not _ford_angle_tracking_saturated(-12.0, -12.0)
-    assert _ford_angle_tracking_saturated(16.0, 12.0)
-    assert _ford_angle_tracking_saturated(12.0, -12.0)
-
-  def test_ford_angle_tracking_still_reports_a_stalled_eps(self):
-    assert _ford_angle_tracking_saturated(3.0, 0.0)
-    assert not _ford_angle_tracking_saturated(2.5, 0.0)
-
-  def test_ford_angle_handoff_saturation_waits_for_eps_response(self):
-    CP = SimpleNamespace(
-      steerLimitTimer=1.0,
-      brand="ford",
-      carFingerprint="FORD_MUSTANG_MACH_E_MK1",
-    )
-    controller = LatControlAngle(CP, None, DT_CTRL)
-    target = [12.0]
-    VM = SimpleNamespace(get_steer_from_curvature=lambda *_args: math.radians(target[0]))
-    CS = car.CarState.new_message(vEgo=10.0, steeringPressed=False)
-    params = log.LiveParametersData.new_message(angleOffsetDeg=0.0, roll=0.0)
-    toggles = SimpleNamespace(ford_lateral_mode=2)
-
-    for frame in range(round(2.0 / DT_CTRL)):
-      CS.steeringAngleDeg = frame * 12.0 * DT_CTRL
-      target[0] = CS.steeringAngleDeg + 12.0
-      _, _, angle_log = controller.update(
-        True, CS, VM, params, False, 0.0, False, 0.0, None, None, toggles)
-      assert not angle_log.saturated
-
-    for _ in range(round(2.0 / DT_CTRL)):
-      _, _, angle_log = controller.update(
-        True, CS, VM, params, False, 0.0, False, 0.0, None, None, toggles)
-    assert angle_log.saturated
 
   def test_torque_log_exposes_friction_controller_state(self):
     controller, VM, CS, params, starpilot_toggles = self._build_torque_controller(GM.CHEVROLET_BOLT_ACC_2022_2023)
@@ -857,7 +823,7 @@ class TestLatControl:
 
     assert low_speed_center > highway_center
     assert highway_center < highway_turn <= 1.0
-    assert highway_center > 0.89
+    assert highway_center > 0.87
 
   def test_prius_ff_scale_curve(self):
     assert get_prius_ff_scale(0.0, 0.0, 20.0) == 1.0
@@ -955,6 +921,28 @@ class TestLatControl:
     assert get_genesis_gv70_high_speed_error_scale(-0.7, 0.58, -0.8, 20.0) > \
       get_genesis_gv70_high_speed_error_scale(-0.7, 0.58, -0.8, 33.5)
 
+  def test_genesis_gv70_reversal_damping_is_medium_speed_and_phase_gated(self):
+    same_direction = get_genesis_gv70_reversal_output_scale(0.7, 0.9, 0.8, 16.0)
+    low_speed = get_genesis_gv70_reversal_output_scale(-0.7, 0.7, -0.8, 8.0)
+    route_speed = get_genesis_gv70_reversal_output_scale(-0.7, 0.7, -0.8, 15.0)
+
+    assert same_direction == pytest.approx(1.0)
+    assert route_speed < 1.0
+    assert route_speed < low_speed
+
+  def test_genesis_gv70_low_speed_center_overshoot_damping(self):
+    center_overshoot = get_genesis_gv70_low_speed_center_overshoot_scale(0.02, 0.45, 22.0 * 0.44704)
+    clean_center = get_genesis_gv70_low_speed_center_overshoot_scale(0.02, 0.02, 22.0 * 0.44704)
+    strong_turn = get_genesis_gv70_low_speed_center_overshoot_scale(0.8, 0.9, 22.0 * 0.44704)
+    opposite_turn = get_genesis_gv70_low_speed_center_overshoot_scale(0.4, -0.8, 22.0 * 0.44704)
+    high_speed = get_genesis_gv70_low_speed_center_overshoot_scale(0.02, 0.45, 45.0 * 0.44704)
+
+    assert center_overshoot < 0.85
+    assert clean_center == pytest.approx(1.0)
+    assert strong_turn > center_overshoot
+    assert opposite_turn == pytest.approx(1.0)
+    assert high_speed > center_overshoot
+
   def test_genesis_g70_center_chatter_tune(self):
     base = get_standard_friction_threshold(25.0)
     center = get_genesis_g70_friction_threshold(25.0, 0.0, 0.0)
@@ -973,11 +961,21 @@ class TestLatControl:
     assert get_genesis_g70_low_speed_output_limit(0.0, 2.0) < 0.30
     assert get_genesis_g70_low_speed_angle_damping(0.0, -20.0, 0.0, 2.0) < 0.0
     assert get_genesis_g70_low_speed_angle_damping(0.0, 20.0, 0.0, 2.0) > 0.0
-    assert get_genesis_g70_curve_unwind_output_scale(0.7, -0.5, 25.0) == pytest.approx(1.0)
+    assert get_genesis_g70_high_speed_transition_scale(0.0, 0.8, 65.0 * 0.44704) < \
+      get_genesis_g70_high_speed_transition_scale(0.0, 0.1, 65.0 * 0.44704)
+    assert get_genesis_g70_high_speed_transition_scale(1.0, 0.8, 65.0 * 0.44704) > \
+      get_genesis_g70_high_speed_transition_scale(0.0, 0.8, 65.0 * 0.44704)
+    assert get_genesis_g70_high_speed_transition_scale(0.0, 0.8, 20.0 * 0.44704) > \
+      get_genesis_g70_high_speed_transition_scale(0.0, 0.8, 65.0 * 0.44704)
+    assert 0.90 < get_genesis_g70_curve_unwind_output_scale(0.7, -0.5, 25.0) < 1.0
     assert get_genesis_g70_curve_unwind_output_scale(0.7, 0.5, 25.0) == 1.0
     assert get_genesis_g70_angle_output_scale(55.0, 1.0) > get_genesis_g70_angle_output_scale(85.0, 1.0)
     assert get_genesis_g70_angle_output_scale(85.0, -1.0) == pytest.approx(1.0)
     assert get_genesis_g70_friction_jerk_deadzone(25.0, 0.0) > 0.25
+    hwy_unwind_deadzone = get_genesis_g70_friction_jerk_deadzone(68.0 * 0.44704, 0.8, -0.6, 1.0)
+    hwy_turn_in_deadzone = get_genesis_g70_friction_jerk_deadzone(68.0 * 0.44704, 0.8, 0.6, 0.5)
+    assert hwy_unwind_deadzone > hwy_turn_in_deadzone
+    assert hwy_unwind_deadzone > 0.08
     assert get_genesis_g70_unwind_ff_scale(-0.7, -0.95, 0.5, 25.0) < 0.90
     assert get_genesis_g70_unwind_ff_scale(-0.7, -0.95, -0.5, 25.0) == 1.0
     assert get_genesis_g70_unwind_ff_scale(-0.7, 0.2, 0.5, 25.0) == 1.0

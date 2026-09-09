@@ -37,7 +37,6 @@ class SubaruMsg(enum.IntEnum):
   ES_STATIC_1       = 0x22a
   ES_STATIC_2       = 0x325
   Dashlights        = 0x390
-  AVH               = 0x32b
 
 
 SUBARU_MAIN_BUS = 0
@@ -386,20 +385,6 @@ class TestSubaruGen2FixedAngleStopStartSafety(TestSubaruGen2FixedAngleSafety):
     self.assertFalse(self._tx(self._stop_start_msg(False)))
 
 
-class TestSubaruGen2FixedAngleStopStartAvhSafety(TestSubaruGen2FixedAngleStopStartSafety):
-  FLAGS = TestSubaruGen2FixedAngleStopStartSafety.FLAGS | SubaruSafetyFlags.AVH_BUTTON
-  TX_MSGS = TestSubaruGen2FixedAngleStopStartSafety.TX_MSGS + [[SubaruMsg.AVH, SUBARU_ALT_BUS]]
-
-  def _avh_msg(self, pressed):
-    return self.packer.make_can_msg_safety(
-      "AVH", SUBARU_ALT_BUS, {"COUNTER": 0, "AVH": pressed},
-    )
-
-  def test_avh_tx_requires_pressed_bit(self):
-    self.assertTrue(self._tx(self._avh_msg(True)))
-    self.assertFalse(self._tx(self._avh_msg(False)))
-
-
 class TestSubaruDPlatformAngleSafety(TestSubaruStockLongitudinalSafetyBase, TestSubaruAngleSafetyBase):
   FLAGS = SubaruSafetyFlags.GEN2 | SubaruSafetyFlags.LKAS_ANGLE | SubaruSafetyFlags.D_PLATFORM
   ALT_MAIN_BUS = SUBARU_ALT_BUS
@@ -430,6 +415,18 @@ class TestSubaruDPlatformAngleSafety(TestSubaruStockLongitudinalSafetyBase, Test
 
   def _angle_meas_msg(self, angle):
     return self.packer.make_can_msg_safety("Steering_2", SUBARU_MAIN_BUS, {"Steering_Angle": angle})
+
+
+class TestSubaruDPlatformFixedAngleSafety(TestSubaruDPlatformAngleSafety):
+  FLAGS = SubaruSafetyFlags.GEN2 | SubaruSafetyFlags.LKAS_ANGLE | SubaruSafetyFlags.D_PLATFORM | \
+    SubaruSafetyFlags.FIXED_ANGLE_LIMITS
+  STEER_ANGLE_MAX = 545
+  ANGLE_RATE_BP = [0., 5., 35.]
+  ANGLE_RATE_UP = [5., .8, .15]
+  ANGLE_RATE_DOWN = [5., .8, .15]
+
+  def test_rt_limits(self):
+    raise unittest.SkipTest("Breakpoint angle limits do not enforce a real-time message frequency")
 
 
 class TestSubaruDPlatformStopStartSafety(TestSubaruDPlatformAngleSafety):

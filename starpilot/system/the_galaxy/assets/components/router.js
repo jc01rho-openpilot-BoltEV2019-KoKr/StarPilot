@@ -2,7 +2,7 @@ import { html, reactive } from "/assets/vendor/arrow-core.js"
 import { createBrowserHistory, createRouter } from "/assets/vendor/remix-router-1.3.1.js"
 import { hideSidebar } from "/assets/js/utils.js"
 import { Bluetooth } from "/assets/components/tools/bluetooth.js?v=bluetooth-live-15"
-import { WheelControls } from "/assets/components/tools/wheel_controls.js?v=controllers-2"
+import { WheelControls } from "/assets/components/tools/wheel_controls.js?v=controllers-3"
 import { DoorControl } from "/assets/components/tools/doors.js"
 const galaxyAssetVersion = encodeURIComponent(window.__GALAXY_ASSET_VERSION__ || Date.now())
 const { DeviceSettings } = await import(`/assets/components/tools/device_settings.js?v=${galaxyAssetVersion}`)
@@ -11,7 +11,6 @@ import { VehicleFeatures } from "/assets/components/tools/vehicle_features.js"
 import { TSKManager } from "/assets/components/tools/tsk_manager.js"
 import { GalaxyPairing } from "/assets/components/tools/galaxy.js"
 import { Home } from "/assets/components/home/home.js"
-import { LongitudinalManeuvers } from "/assets/components/tools/longitudinal_maneuvers.js"
 import { MapsManager } from "/assets/components/tools/maps.js"
 import { NavDestination } from "/assets/components/navigation/navigation_destination.js?v=nav-search-context-2"
 import { NavKeys } from "/assets/components/navigation/navigation_keys.js?v=app-keys-session-1"
@@ -21,7 +20,8 @@ import { ScreenRecordings } from "/assets/components/recordings/screen_recording
 import { Sidebar } from "/assets/components/sidebar.js?v=controllers-nav-1"
 import { SentryMode } from "/assets/components/tools/sentry.js"
 import { SpeedLimits } from "/assets/components/tools/speed_limits.js"
-import { ModelManager } from "/assets/components/tools/model_manager.js?v=20260825a"
+import { ModelManager } from "/assets/components/tools/model_manager.js?v=20260906a"
+import { ModelLaboratory } from "/assets/components/tools/model_laboratory.js?v=model-lab-6"
 import { LivePlots } from "/assets/components/tools/plots.js"
 import { ThemeMaker } from "/assets/components/tools/theme_maker.js"
 import { TestingGround } from "/assets/components/tools/testing_ground.js"
@@ -88,9 +88,9 @@ function Root() {
     createRoute("settings", "/settings/:section/:subsection?", SettingsView),
     createRoute("speed_limits", "/download_speed_limits", SpeedLimits),
     createRoute("model_manager", "/manage_models", ModelManager),
+    createRoute("model_laboratory", "/model_laboratory", ModelLaboratory),
     createRoute("tuning", "/tuning", Tuning),
     createRoute("lateral_maneuvers", "/lateral_maneuvers", Tuning),
-    createRoute("longitudinal_maneuvers", "/longitudinal_maneuvers", LongitudinalManeuvers),
     createRoute("maps", "/manage_maps", MapsManager),
     createRoute("plots", "/plots", LivePlots),
     createRoute("thememaker", "/theme_maker", ThemeMaker),

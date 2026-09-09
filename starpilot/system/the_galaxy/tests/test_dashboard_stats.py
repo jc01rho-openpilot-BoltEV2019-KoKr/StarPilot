@@ -41,11 +41,36 @@ loggerd_uploader.listdir_by_creation = lambda path: [
 sys.modules.setdefault("openpilot.system.loggerd.uploader", loggerd_uploader)
 
 model_manager = ModuleType("openpilot.starpilot.assets.model_manager")
+model_manager.MODEL_LAB_DOWNLOAD_PARAM = "ModelLabModelToDownload"
 model_manager.canonical_model_key = lambda value: str(value or "").strip().lower().replace(" ", "-")
 model_manager.external_gpu_available = lambda: False
+model_manager.disable_big_model_profile = lambda params: (
+  params.put("ActiveBigModel", "none"),
+  params.remove("ActiveBigModelName"),
+  params.remove("ActiveBigModelVersion"),
+)
+def _stub_get_model_profile(params, profile):
+  prefix = "ActiveBigModel" if profile == "big" else "ActiveSmallModel"
+  stored_key = params.get(prefix)
+  if profile == "big" and stored_key == "none":
+    return "", "", ""
+  key = stored_key or ("rdf43" if profile == "small" else "")
+  return key, params.get(f"{prefix}Name") or key, params.get(f"{prefix}Version") or ""
+
+
+def _stub_set_model_profile(params, profile, key, name="", version=""):
+  prefix = "ActiveBigModel" if profile == "big" else "ActiveSmallModel"
+  params.put(prefix, key)
+  params.put(f"{prefix}Name", name or key)
+  params.put(f"{prefix}Version", version)
+
+
+model_manager.get_model_profile = _stub_get_model_profile
 model_manager.is_builtin_model_key = lambda key: False
+model_manager.model_accelerator_artifact_filename = lambda key: f"{key}_driving_chestnut_tinygrad.pkl"
 model_manager.model_key_aliases = lambda key: ()
 model_manager.model_uses_external_gpu = lambda key: False
+model_manager.set_model_profile = _stub_set_model_profile
 sys.modules.setdefault("openpilot.starpilot.assets.model_manager", model_manager)
 
 starpilot_variables = ModuleType("openpilot.starpilot.common.starpilot_variables")
@@ -310,6 +335,7 @@ def _install_server_import_stubs():
     "SCREEN_RECORDINGS_PATH": Path("/tmp/dashboard-test-recordings"),
     "STOCK_THEME_PATH": Path("/tmp/dashboard-test-stock-theme"),
     "THEME_SAVE_PATH": Path("/tmp/dashboard-test-themes"),
+    "TOGGLE_BACKUPS": Path("/tmp/dashboard-test-toggle-backups"),
   }.items():
     setattr(starpilot_variables, name, value)
   starpilot_variables.default_ev_tuning_enabled = lambda *args, **kwargs: False
@@ -347,6 +373,8 @@ def _install_server_import_stubs():
       {"key": "__starpilot_controller_action__:pulse_and_glide", "label": "Pulse and Glide", "section": "Controller Actions"},
       {"key": "__starpilot_controller_action__:force_coast", "label": "Force Coasting", "section": "Controller Actions"},
       {"key": "__starpilot_controller_action__:toggle_aol", "label": "Toggle AOL", "section": "Controller Actions"},
+      {"key": "__starpilot_controller_action__:engage_openpilot", "label": "Engage Openpilot", "section": "Controller Actions"},
+      {"key": "__starpilot_controller_action__:disengage_openpilot", "label": "Disengage Openpilot", "section": "Controller Actions"},
     ),
     CONTROLLER_ACTION_SET_SPEED="__starpilot_controller_action__:set_speed",
     CONTROLLER_ACTION_SLOT_COUNT=10,
@@ -386,6 +414,9 @@ class FakeParams:
 
   def put(self, key, value):
     self.values[key] = value
+
+  def remove(self, key):
+    self.values.pop(key, None)
 
 
 class FailingPutParams(FakeParams):
@@ -1772,6 +1803,228 @@ def _load_server_module():
   return module
 
 
+def test_model_profiles_can_be_selected_without_external_gpu(monkeypatch, tmp_path):
+  server = _load_server_module()
+  assert server._import_galaxy_web_symbols()
+
+  class ModelParams(FakeParams):
+    defaults = {
+      "Model": "rdf43",
+      "DrivingModel": "rdf43",
+      "DrivingModelName": "Regret Driven Framework V4",
+      "ModelVersion": "v15",
+      "DrivingModelVersion": "v15",
+    }
+
+    def get_default_value(self, key):
+      return self.defaults.get(key)
+
+  params = ModelParams({
+    "AvailableModels": "rdf43,small-one,big-one",
+    "AvailableModelNames": "Regret Driven Framework V4,Small One,Big One",
+    "AvailableModelSeries": "Built-in,Small,Large",
+    "AvailableModelArtifactFormats": "tinygrad_single_v1,tinygrad_single_v1,tinygrad_single_v1",
+    "ModelVersions": "v15,v15,v16",
+    "ModelReleasedDates": "2026-01-01,2026-01-02,2026-01-03",
+    "Model": "rdf43",
+    "DrivingModel": "rdf43",
+  })
+  (tmp_path / "small-one_driving_tinygrad.pkl").write_bytes(b"small")
+  (tmp_path / "big-one_driving_tinygrad.pkl").write_bytes(b"big")
+
+  app = server.Flask(
+    "model_profiles_test",
+    template_folder=str(MODULE_DIR / "templates"),
+    static_folder=str(MODULE_DIR / "assets"),
+  )
+  server.setup(app)
+  monkeypatch.setattr(server, "params", params)
+  monkeypatch.setattr(server, "params_memory", FakeParams())
+  monkeypatch.setattr(server, "MODELS_PATH", tmp_path)
+  monkeypatch.setattr(server, "external_gpu_available", lambda: False)
+  monkeypatch.setattr(server, "is_builtin_model_key", lambda key: key == "rdf43")
+  monkeypatch.setattr(server, "model_uses_external_gpu", lambda key: key == "big-one")
+  client = app.test_client()
+
+  big_response = client.put("/api/models/active", json={"profile": "big", "model": "big-one"})
+  assert big_response.status_code == 200
+  assert params.values["ActiveBigModel"] == "big-one"
+  assert params.values["Model"] == "rdf43"
+
+  small_response = client.put("/api/models/active", json={"profile": "small", "model": "small-one"})
+  assert small_response.status_code == 200
+  assert params.values["ActiveSmallModel"] == "small-one"
+
+  status = client.get("/api/models/status").get_json()
+  assert status["activeBigModel"] == "big-one"
+  assert status["activeSmallModel"] == "small-one"
+
+  monkeypatch.setattr(server, "external_gpu_available", lambda: True)
+  active_big_response = client.put("/api/models/active", json={"profile": "big", "model": "big-one"})
+  assert active_big_response.status_code == 200
+  assert params.values["Model"] == params.values["DrivingModel"] == "big-one"
+  assert params.values["DrivingModelName"] == "Big One"
+
+  disabled = client.put("/api/models/active", json={"profile": "big", "model": ""})
+  assert disabled.status_code == 200
+  assert params.values["ActiveBigModel"] == "none"
+  assert params.values["Model"] == params.values["DrivingModel"] == "small-one"
+  assert disabled.get_json()["model"] == ""
+  assert client.get("/api/models/status").get_json()["activeBigModel"] == ""
+
+  wrong_profile = client.put("/api/models/active", json={"profile": "small", "model": "big-one"})
+  assert wrong_profile.status_code == 409
+
+  params.put("IsOnroad", True)
+  onroad = client.put("/api/models/active", json={"profile": "small", "model": "rdf43"})
+  assert onroad.status_code == 403
+
+
+def test_model_laboratory_api_uses_installed_models_and_enforces_hardware_size_version_guards(monkeypatch, tmp_path):
+  server = _load_server_module()
+  assert server._import_galaxy_web_symbols()
+
+  class ModelLabParams(FakeParams):
+    defaults = {
+      "Model": "rdf43",
+      "DrivingModel": "rdf43",
+      "DrivingModelName": "Regret Driven Framework V4",
+      "ModelVersion": "v15",
+      "DrivingModelVersion": "v15",
+    }
+
+    def get_default_value(self, key):
+      return self.defaults.get(key)
+
+  params = ModelLabParams({
+    "AvailableModels": "lat,long,old,big",
+    "AvailableModelNames": "Lateral Ace,Longitudinal Ace,Old Generation,Chestnut One Billion",
+    "AvailableModelSeries": "Lab,Lab,Legacy,Large",
+    "AvailableModelArtifactFormats": "tinygrad_single_v1,tinygrad_single_v1,tinygrad_single_v1,tinygrad_single_v1",
+    "ModelVersions": "v15,v15,v9,v16",
+    "ModelReleasedDates": "2026-01-01,2026-01-02,2025-01-01,2026-08-01",
+    "ModelManifestVersion": "v25",
+    "Model": "rdf43",
+    "DrivingModel": "rdf43",
+    "ActiveSmallModel": "rdf43",
+    "ActiveSmallModelName": "Regret Driven Framework V4",
+    "ActiveSmallModelVersion": "v15",
+    "ActiveBigModel": "big",
+    "ActiveBigModelName": "Chestnut One Billion",
+    "ActiveBigModelVersion": "v16",
+  })
+  metadata = {
+    "lat": {"model_size": "small", "model_size_declared": True, "model_lab_eligible": True,
+            "accelerator_artifacts": {"chestnut": {"execution_device": "AMD"}}},
+    "long": {"model_size": "small", "model_size_declared": True, "model_lab_eligible": True,
+             "accelerator_artifacts": {"chestnut": {"execution_device": "AMD"}}},
+    "old": {"model_size": "small", "model_size_declared": True, "model_lab_eligible": True,
+            "accelerator_artifacts": {"chestnut": {"execution_device": "AMD"}}},
+    "big": {"model_size": "chestnut", "model_size_declared": True, "uses_external_gpu": True},
+  }
+  (tmp_path / ".model_artifacts.json").write_text(json.dumps(metadata))
+  (tmp_path / "lat_driving_tinygrad.pkl").write_bytes(b"lat")
+  (tmp_path / "long_driving_tinygrad.pkl").write_bytes(b"long")
+  (tmp_path / "old_driving_tinygrad.pkl").write_bytes(b"old")
+  (tmp_path / "lat_driving_chestnut_tinygrad.pkl").write_bytes(b"lat-amd")
+  (tmp_path / "long_driving_chestnut_tinygrad.pkl").write_bytes(b"long-amd")
+  (tmp_path / "old_driving_chestnut_tinygrad.pkl").write_bytes(b"old-amd")
+
+  app = server.Flask(
+    "model_lab_test",
+    template_folder=str(MODULE_DIR / "templates"),
+    static_folder=str(MODULE_DIR / "assets"),
+  )
+  server.setup(app)
+  monkeypatch.setattr(server, "params", params)
+  params_memory = FakeParams()
+  monkeypatch.setattr(server, "params_memory", params_memory)
+  monkeypatch.setattr(server, "MODELS_PATH", tmp_path)
+  monkeypatch.setattr(server, "external_gpu_available", lambda: True)
+  monkeypatch.setattr(server, "model_uses_external_gpu", lambda key: key == "big")
+  client = app.test_client()
+
+  status = client.get("/api/model-laboratory")
+  status_payload = status.get_json()
+  assert status.status_code == 200
+  assert status_payload["chestnutReady"] is True
+  assert {model["value"] for model in status_payload["models"]} == {"rdf43", "lat", "long", "old"}
+  assert status_payload["summary"]["ready"] == 3
+  assert status_payload["summary"]["published"] == 3
+
+  enabled = client.put("/api/model-laboratory", json={
+    "enabled": True,
+    "lateralModel": "lat",
+    "longitudinalModel": "long",
+  })
+  assert enabled.status_code == 200
+  assert params.values["ModelLabConfig"]["enabled"] is True
+  assert params.values["Model"] == params.values["DrivingModel"] == "lat"
+  assert params.values["DrivingModelName"] == "LA + LA"
+  assert params.values["ModelVersion"] == params.values["DrivingModelVersion"] == "v15"
+
+  mixed_version = client.put("/api/model-laboratory", json={
+    "enabled": True,
+    "lateralModel": "lat",
+    "longitudinalModel": "old",
+  })
+  assert mixed_version.status_code == 200
+  assert params.values["ModelLabConfig"] == {
+    "enabled": True,
+    "lateralModel": "lat",
+    "longitudinalModel": "old",
+  }
+
+  oversized = client.put("/api/model-laboratory", json={
+    "enabled": True,
+    "lateralModel": "lat",
+    "longitudinalModel": "big",
+  })
+  assert oversized.status_code == 409
+  assert "Chestnut-class" in oversized.get_json()["error"]
+
+  (tmp_path / "old_driving_chestnut_tinygrad.pkl").unlink()
+  queued = client.post("/api/model-laboratory/download", json={"model": "old"})
+  assert queued.status_code == 200
+  assert params_memory.values["ModelLabModelToDownload"] == "old"
+  assert "eGPU variant" in params_memory.values["ModelDownloadProgress"]
+  params_memory.remove("ModelLabModelToDownload")
+
+  monkeypatch.setattr(server, "external_gpu_available", lambda: False)
+  (tmp_path / "old_driving_chestnut_tinygrad.pkl").unlink(missing_ok=True)
+  queued_without_chestnut = client.post("/api/model-laboratory/download", json={"model": "old"})
+  assert queued_without_chestnut.status_code == 200
+  assert params_memory.values["ModelLabModelToDownload"] == "old"
+  params_memory.remove("ModelLabModelToDownload")
+
+  no_chestnut = client.put("/api/model-laboratory", json={
+    "enabled": True,
+    "lateralModel": "lat",
+    "longitudinalModel": "long",
+  })
+  assert no_chestnut.status_code == 409
+  assert "Chestnut" in no_chestnut.get_json()["error"]
+
+  monkeypatch.setattr(server, "external_gpu_available", lambda: True)
+  disabled = client.put("/api/model-laboratory", json={
+    "enabled": False,
+    "lateralModel": "lat",
+    "longitudinalModel": "long",
+  })
+  assert disabled.status_code == 200
+  assert params.values["Model"] == params.values["DrivingModel"] == "big"
+  assert params.values["DrivingModelName"] == "Chestnut One Billion"
+
+  deleted = client.delete("/api/model-laboratory/artifact", json={"model": "lat"})
+  assert deleted.status_code == 200
+  assert not (tmp_path / "lat_driving_chestnut_tinygrad.pkl").exists()
+  assert (tmp_path / "lat_driving_tinygrad.pkl").exists()
+
+  params.values["IsOnroad"] = True
+  onroad = client.put("/api/model-laboratory", json={"enabled": False})
+  assert onroad.status_code == 403
+
+
 def test_clear_generated_build_state_preserves_prebuilts_and_user_data(tmp_path):
   server = _load_server_module()
   sconsign = tmp_path / ".sconsign.dblite"
@@ -2098,3 +2351,85 @@ def test_toggle_restore_reports_invalid_and_unavailable_settings(monkeypatch):
   assert damaged_response.get_json()["success"] is False
   assert wrong_format_response.status_code == 400
   assert wrong_format_response.get_json()["success"] is False
+
+
+def test_toggle_profile_slots_save_and_load_the_same_filtered_settings(monkeypatch, tmp_path):
+  server = _load_server_module()
+  assert server._import_galaxy_web_symbols()
+
+  definitions = {
+    "EnabledSetting": (True, server.ParamKeyType.BOOL, server.ParamKeyFlag.PERSISTENT),
+    "NumericSetting": (1.5, server.ParamKeyType.FLOAT, server.ParamKeyFlag.PERSISTENT),
+    "SensitiveSetting": ("", server.ParamKeyType.STRING, server.ParamKeyFlag.PERSISTENT | server.ParamKeyFlag.DONT_LOG),
+  }
+
+  class ToggleParams:
+    def __init__(self):
+      self.values = {
+        "EnabledSetting": False,
+        "NumericSetting": 2.75,
+        "SensitiveSetting": "secret",
+      }
+
+    def get(self, key, block=False):
+      del block
+      return self.values.get(key, definitions[key][0])
+
+    def get_default_value(self, key):
+      return definitions[key][0]
+
+    def get_key_flag(self, key):
+      return definitions[key][2]
+
+    def get_type(self, key):
+      return definitions[key][1]
+
+    def put(self, key, value):
+      self.values[key] = value
+
+  raw_params = ToggleParams()
+  server.starpilot_default_params = [
+    (key, default, value_type, 0)
+    for key, (default, value_type, _) in definitions.items()
+  ]
+  monkeypatch.setattr(server, "_params_raw", raw_params)
+  monkeypatch.setattr(server, "params", FakeParams({"IsOnroad": False}))
+  monkeypatch.setattr(server, "EXCLUDED_KEYS", set())
+  monkeypatch.setattr(server, "TOGGLE_BACKUPS", tmp_path)
+  update_calls = []
+  monkeypatch.setattr(server, "update_starpilot_toggles", lambda: update_calls.append(True))
+
+  app = server.Flask(
+    "toggle_profile_test",
+    template_folder=str(MODULE_DIR / "templates"),
+    static_folder=str(MODULE_DIR / "assets"),
+  )
+  server.setup(app)
+  client = app.test_client()
+
+  initial = client.get("/api/toggles/profiles").get_json()
+  saved = client.post("/api/toggles/profiles/a/save")
+  assert initial["slots"][0]["saved"] is False
+  assert saved.status_code == 200
+  assert saved.get_json()["profile"]["settingsCount"] == 2
+
+  raw_params.values.update({
+    "EnabledSetting": True,
+    "NumericSetting": 9.0,
+    "SensitiveSetting": "new-secret",
+  })
+  loaded = client.post("/api/toggles/profiles/a/load")
+  assert loaded.status_code == 200
+  assert loaded.get_json()["restoredCount"] == 2
+  assert raw_params.values["EnabledSetting"] is False
+  assert raw_params.values["NumericSetting"] == 2.75
+  assert raw_params.values["SensitiveSetting"] == "new-secret"
+  assert update_calls == [True]
+
+  missing = client.post("/api/toggles/profiles/b/load")
+  assert missing.status_code == 400
+  assert "has not been saved" in missing.get_json()["message"]
+
+  server.params.values["IsOnroad"] = True
+  onroad = client.post("/api/toggles/profiles/a/load")
+  assert onroad.status_code == 403

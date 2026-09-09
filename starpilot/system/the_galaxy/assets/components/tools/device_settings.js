@@ -1,4 +1,5 @@
 import { html, reactive } from "/assets/vendor/arrow-core.js"
+import { formatNumericParamValue, resolveVehicleUnitParam } from "/assets/mobile/js/params.js"
 
 const endpointOptionsCache = {}
 const endpointOptionsInflight = {}
@@ -40,7 +41,7 @@ const VEHICLE_SETTING_MAKES = {
   SubaruSNG: ["Subaru"],
   SubaruSNGManualParkingBrake: ["Subaru"],
   SubaruStopStartOff: ["Subaru"],
-  SubaruAvhOnAtStartup: ["Subaru"],
+  SubaruRedneckCruise: ["Subaru"],
   ClusterOffset: ["Lexus", "Toyota"],
   SNGHack: ["Lexus", "Toyota"],
   ToyotaAutoHold: ["Lexus", "Toyota"],
@@ -103,9 +104,11 @@ function normalizeVehicleMake(value) {
 
 function isVehicleSettingVisible(section, param) {
   const allowedMakes = param.vehicle_makes || (section.name === "Vehicle" ? VEHICLE_SETTING_MAKES[param.key] : null)
-  if (!allowedMakes) return true
   const selectedMake = normalizeVehicleMake(state.values.CarMake)
-  return allowedMakes.some(make => normalizeVehicleMake(make) === selectedMake)
+  if (allowedMakes && !allowedMakes.some(make => normalizeVehicleMake(make) === selectedMake)) return false
+
+  const excludedMakes = param.excluded_vehicle_makes || []
+  return !excludedMakes.some(make => normalizeVehicleMake(make) === selectedMake)
 }
 
 function matchesSettingValueCondition(param) {
@@ -566,11 +569,11 @@ function formatSliderValue(val, stepStr, precisionInt, key) {
 
 function formatReadoutValue(p) {
   const raw = state.values[p.key]
-  const value = parseFloat(raw)
-  if (raw === undefined || raw === null || Number.isNaN(value)) return "--"
+  const v = parseFloat(raw)
+  if (raw === undefined || raw === null || Number.isNaN(v)) return "--"
 
   const precision = p.precision !== undefined && p.precision !== null ? Number(p.precision) : 2
-  const formatted = Number(value.toFixed(Math.max(0, precision))).toString()
+  const formatted = Number(v.toFixed(Math.max(0, precision))).toString()
   return p.unit ? `${formatted}${p.unit}` : formatted
 }
 
@@ -587,6 +590,7 @@ function formatStepValue(step, precision) {
 }
 
 function numericBounds(param) {
+  param = resolveVehicleUnitParam(param, state.values)
   const defaultBounds = {
     min: param.min !== undefined ? param.min : (param.data_type === "float" ? 0.0 : 0),
     max: param.max !== undefined ? param.max : (param.data_type === "float" ? 100.0 : 100),
@@ -603,6 +607,10 @@ function numericBounds(param) {
   }
   if (param.key === "ScreenBrightnessOnroad") {
     return { min: 1, max: 101, step: 1 }
+  }
+
+  if (param.key === "LaneCenterOffset") {
+    return { min: -0.3, max: 0.3, step: 0.01 }
   }
 
   // Personality jerk params are stored as percentage-style integers (25..200).
@@ -1030,13 +1038,7 @@ function syncNumericDisplay(param, rawValue) {
   const displayEl = document.getElementById(`ds-display-${param.key}`)
   if (!displayEl) return
 
-  const bounds = numericBounds(param)
-  displayEl.textContent = formatSliderValue(
-    rawValue,
-    String(bounds.step),
-    param.precision,
-    param.key,
-  )
+  displayEl.textContent = formatNumericParamValue(param, rawValue, state.values)
 }
 
 async function updateNumericParam(param, numericValue, options = {}) {
@@ -1133,6 +1135,18 @@ function stepNumericParam(param, direction) {
   if (Math.abs(next - current) <= epsilon) return
 
   updateNumericParam(param, next)
+}
+
+function canStepNumericParam(param, direction) {
+  const bounds = numericBounds(param)
+  const min = Number(bounds.min)
+  const max = Number(bounds.max)
+  const current = resolveCurrentNumericValue(param, bounds)
+  const precision = stepPrecision(bounds.step, param.precision)
+  const epsilon = Math.pow(10, -(precision + 2))
+
+  if (!Number.isFinite(min) || !Number.isFinite(max) || !Number.isFinite(current)) return false
+  return direction < 0 ? current > min + epsilon : current < max - epsilon
 }
 
 function applyManualNumericParam(param) {
@@ -1377,10 +1391,9 @@ function matchesFilter(p) {
   if (!state.filter) return true
   if (isGroupParam(p)) return false
   const q = state.filter.toLowerCase()
-  const label = String(p.label || "").toLowerCase()
-  const key = String(p.key || "").toLowerCase()
-  const description = String(p.description || "").toLowerCase()
-  return label.includes(q) || key.includes(q) || description.includes(q)
+  const displayParam = resolveVehicleUnitParam(p, state.values)
+  return [displayParam.label, displayParam.key, displayParam.description, displayParam.unit, displayParam.unit_search_terms]
+    .some(value => String(value || "").toLowerCase().includes(q))
 }
 
 function clearSearchFilter() {
@@ -1442,8 +1455,7 @@ function formatFlmValue(param, value) {
   if (value === undefined || value === null) return "not set"
   if (param.data_type === "bool") return value ? "On" : "Off"
   if (param.ui_type === "numeric") {
-    const bounds = numericBounds(param)
-    return formatSliderValue(value, String(bounds.step), param.precision, param.key)
+    return formatNumericParamValue(param, value, state.values)
   }
   return String(value)
 }
@@ -1628,6 +1640,8 @@ function renderSettingRow(p) {
     return ""
   }
 
+  p = resolveVehicleUnitParam(p, state.values)
+
   const isNumeric = p.ui_type === "numeric"
   const isSlider = isNumeric && p.control === "slider"
   const isText = p.ui_type === "text"
@@ -1687,8 +1701,8 @@ function renderSettingRow(p) {
           @input="${(event) => previewSliderParam(p, event.currentTarget.value)}"
           @change="${(event) => commitSliderParam(p, event.currentTarget.value)}" />
         <div class="ds-slider-scale">
-          <span>${formatSliderValue(numericBounds(p).min, String(numericBounds(p).step), p.precision, p.key)}</span>
-          <span>${formatSliderValue(numericBounds(p).max, String(numericBounds(p).step), p.precision, p.key)}</span>
+          <span>${formatNumericParamValue(p, numericBounds(p).min, state.values)}</span>
+          <span>${formatNumericParamValue(p, numericBounds(p).max, state.values)}</span>
         </div>
         <button
           class="ds-reset-btn"
@@ -1712,22 +1726,20 @@ function renderSettingRow(p) {
       const precision = stepPrecision(bounds.step, p.precision)
       const epsilon = Math.pow(10, -(precision + 2))
       const updating = isNumericUpdating(p.key)
-      const canDecrease = !updating && currentNumeric > (Number(bounds.min) + epsilon)
-      const canIncrease = !updating && currentNumeric < (Number(bounds.max) - epsilon)
       const defaultNumeric = resolveDefaultNumericValue(p, bounds)
       const defaultLabel = defaultNumeric !== null
-        ? formatSliderValue(defaultNumeric, String(bounds.step), p.precision, p.key)
+        ? formatNumericParamValue(p, defaultNumeric, state.values)
         : "N/A"
       const canReset = !updating && defaultNumeric !== null && Math.abs(defaultNumeric - currentNumeric) > epsilon
-      const stepLabel = p.key === "DeviceShutdown" ? "1 hour" : formatStepValue(bounds.step, precision)
+      const stepLabel = p.key === "DeviceShutdown" ? "1 hour" : `${formatStepValue(bounds.step, precision)}${p.unit || ""}`
       return html`
             <div class="ds-stepper">
               <button
                 class="ds-stepper-btn"
-                disabled="${() => isLocked() || !canDecrease || false}"
+                disabled="${() => isLocked() || isNumericUpdating(p.key) || !canStepNumericParam(p, -1)}"
                 @click="${() => stepNumericParam(p, -1)}">-</button>
               <div class="ds-stepper-meta">
-                <span>${formatSliderValue(bounds.min, String(bounds.step), p.precision, p.key)} to ${formatSliderValue(bounds.max, String(bounds.step), p.precision, p.key)}</span>
+                <span>${formatNumericParamValue(p, bounds.min, state.values)} to ${formatNumericParamValue(p, bounds.max, state.values)}</span>
                 <span class="ds-step-value">Step: ${stepLabel} per click</span>
                 <span class="ds-default-value">Default: ${defaultLabel}</span>
                 <div class="ds-manual-row">
@@ -1757,7 +1769,7 @@ function renderSettingRow(p) {
               </div>
               <button
                 class="ds-stepper-btn"
-                disabled="${() => isLocked() || !canIncrease || false}"
+                disabled="${() => isLocked() || isNumericUpdating(p.key) || !canStepNumericParam(p, 1)}"
                 @click="${() => stepNumericParam(p, 1)}">+</button>            </div>
           `
     })()}
@@ -1875,8 +1887,7 @@ function renderSettingRow(p) {
             if (isColor) return formatColorDisplayValue(p)
             if (isReadout) return formatReadoutValue(p)
             const currentValue = state.sliderPreviewValues[p.key] ?? state.values[p.key]
-            const bounds = numericBounds(p)
-            return currentValue !== undefined ? formatSliderValue(currentValue, String(bounds.step), p.precision, p.key) : ".."
+            return currentValue !== undefined ? formatNumericParamValue(p, currentValue, state.values) : ".."
           }}</span>` : ""}
       </div>
 

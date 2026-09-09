@@ -38,8 +38,16 @@ export function GalaxyConfirm({ title, message, confirmLabel = "Confirm", danger
     const host = document.createElement("div")
     document.body.appendChild(host)
     const { createApp, h } = window.__galaxyVue
-    let instance
-    const app = createApp({
+    let app
+    let settled = false
+    const finish = (value) => {
+      if (settled) return
+      settled = true
+      resolve(value)
+      try { app?.unmount?.() } catch (e) {}
+      host.remove()
+    }
+    app = createApp({
       render() {
         return h(GalaxyModal, {
           modelValue: true,
@@ -47,17 +55,12 @@ export function GalaxyConfirm({ title, message, confirmLabel = "Confirm", danger
           message,
           confirmLabel,
           danger,
-          "onUpdate:modelValue": (v) => { if (!v) teardown() },
-          onConfirm: () => { teardown(); resolve(true) },
-          onCancel: () => { teardown(); resolve(false) },
+          "onUpdate:modelValue": (v) => { if (!v) finish(false) },
+          onConfirm: () => finish(true),
+          onCancel: () => finish(false),
         })
       },
     })
-    const teardown = () => {
-      app.unmount()
-      host.remove()
-      resolve(false)
-    }
-    instance = app.mount(host)
+    app.mount(host)
   })
 }

@@ -2,8 +2,10 @@
 from collections.abc import Callable
 import ctypes
 from functools import cached_property
+import json
 import os
 import struct
+import usb1
 from openpilot.system.hardware import HARDWARE, TICI
 os.environ['GMMU'] = '0'
 os.environ['DEV'] = 'QCOM' if TICI else 'LLVM'
@@ -22,7 +24,7 @@ from msgq.visionipc import VisionIpcClient, VisionStreamType, VisionBuf
 from openpilot.common.swaglog import cloudlog
 from openpilot.common.params import Params
 from openpilot.common.filter_simple import FirstOrderFilter
-from openpilot.common.file_chunker import file_chunked_exists, open_file_chunked, read_file_chunked
+from openpilot.common.file_chunker import file_chunked_exists, open_file_chunked
 from openpilot.common.realtime import config_realtime_process, DT_MDL
 from openpilot.common.transformations.camera import DEVICE_CAMERAS
 from openpilot.common.transformations.model import get_warp_matrix
@@ -37,16 +39,36 @@ from openpilot.selfdrive.modeld.fill_model_msg import fill_model_msg, fill_pose_
 from openpilot.selfdrive.modeld.constants import ModelConstants, Plan
 from openpilot.selfdrive.modeld.compile_modeld import (
   ARTIFACT_FORMAT_VERSION,
+  FAST_POLICY_INPUTS,
+  FAST_WARP_INPUTS,
   IMAGE_HISTORY_IN_POLICY,
   IMAGE_HISTORY_IN_WARP,
   LEGACY_WARP_INPUTS,
   _detect_vision_keys,
+  derive_frame_skip,
   make_split_input_queues,
   make_supercombo_input_queues,
 )
 from openpilot.selfdrive.modeld.helpers import get_tg_input_devices, load_oob, tinygrad_dev_config, usbgpu_present
 from openpilot.selfdrive.modeld.usbgpu_link import wait_usbgpu_link
-from openpilot.starpilot.assets.model_manager import ModelManager, model_uses_external_gpu
+from openpilot.system.hardware.usb import CHESTNUT_USB_IDS
+from openpilot.starpilot.assets.model_manager import (
+  ModelManager,
+  get_model_profile,
+  load_model_artifact_metadata,
+  model_accelerator_artifact_available,
+  model_accelerator_artifact_installed,
+  model_accelerator_artifact_path,
+  model_uses_external_gpu,
+  set_runtime_model_params,
+)
+from openpilot.starpilot.common.model_lab import (
+  MODEL_LAB_RUNTIME_PARAM,
+  compose_model_outputs,
+  hybrid_action_values,
+  load_model_lab_config,
+  model_lab_manifest_eligible,
+)
 from openpilot.starpilot.common.model_versions import is_tinygrad_model_version
 from openpilot.starpilot.common.starpilot_variables import get_starpilot_toggles, MODELS_PATH, params_memory
 
@@ -192,6 +214,38 @@ class ChestnutState:
     self.valid = True
     self.sends = 0
     self.metrics = {}
+    self._asm_usb = None
+
+  def _close_asm_usb(self) -> None:
+    if self._asm_usb is not None:
+      self._asm_usb.close()
+      self._asm_usb = None
+
+  def _open_asm_usb(self):
+    context = usb1.USBContext()
+    for vendor_id, product_id in CHESTNUT_USB_IDS:
+      handle = context.openByVendorIDAndProductID(vendor_id, product_id, skip_on_error=True)
+      if handle is not None:
+        return handle
+    context.close()
+
+  def _read_ina(self) -> tuple[int, int, bool]:
+    if "AMD" in Device._opened_devices and self._asm_usb is None:
+      try:
+        raw = Device["AMD"].iface.pci_dev.usb.usb.control_read(0xC0, 5)
+        return struct.unpack("<Hh?", bytes(raw))
+      except Exception:
+        pass
+    if self._asm_usb is None:
+      self._asm_usb = self._open_asm_usb()
+    if self._asm_usb is None:
+      raise usb1.USBErrorNoDevice
+    try:
+      raw = self._asm_usb.controlRead(0xC0, 0xC0, 0, 0, 5, timeout=100)
+    except usb1.USBError:
+      self._close_asm_usb()
+      raise
+    return struct.unpack("<Hh?", bytes(raw))
 
   @cached_property
   def power_limit(self) -> int:
@@ -233,12 +287,14 @@ class ChestnutState:
         setattr(state, key, value)
 
     asm_valid = False
+    try:
+      state.supplyVoltage, state.supplyCurrent, state.supplyFault = self._read_ina()
+      asm_valid = True
+    except Exception:
+      pass
     if "AMD" in Device._opened_devices:
       try:
-        asm = Device["AMD"].iface.pci_dev.usb
-        state.pcieLtssm = asm.read(0xB450, 1)[0]
-        state.supplyVoltage, state.supplyCurrent = struct.unpack("<Hh", bytes(asm.usb.control_read(0xC0, 5))[:4])
-        asm_valid = True
+        state.pcieLtssm = Device["AMD"].iface.pci_dev.usb.read(0xB450, 1)[0]
       except Exception:
         pass
 
@@ -310,10 +366,15 @@ def _select_builtin_model(params: Params) -> None:
 
 
 def _close_tinygrad_disk_cache_connection() -> None:
-  """Drop tinygrad's process-global cache connection before loading the next model."""
+  """Close tinygrad's cache connection without replacing its thread-local holder."""
   import tinygrad.helpers as tinygrad_helpers
 
-  connection = getattr(tinygrad_helpers, "_db_connection", None)
+  holder = getattr(tinygrad_helpers, "_db_connection", None)
+  if holder is None:
+    return
+
+  has_thread_local_connection = hasattr(holder, "conn")
+  connection = getattr(holder, "conn", holder if hasattr(holder, "close") else None)
   if connection is None:
     return
 
@@ -322,7 +383,13 @@ def _close_tinygrad_disk_cache_connection() -> None:
   except Exception:
     cloudlog.exception("failed to close tinygrad disk cache connection")
   finally:
-    tinygrad_helpers._db_connection = None
+    if has_thread_local_connection:
+      try:
+        del holder.conn
+      except AttributeError:
+        pass
+    else:
+      tinygrad_helpers._db_connection = None
 
 
 def get_action_from_model(model_output: dict[str, np.ndarray], prev_action: log.ModelDataV2.Action,
@@ -388,18 +455,60 @@ class FrameMeta:
       self.frame_id, self.timestamp_sof, self.timestamp_eof = vipc.frame_id, vipc.timestamp_sof, vipc.timestamp_eof
 
 
+MAX_OOB_OPCODE_SIZE = 1024 * 1024 * 1024
+
+
+def _is_oob_artifact_header(header: bytes) -> bool:
+  if len(header) < 10:
+    return False
+  opcode_size = struct.unpack("<q", header[:8])[0]
+  return 2 <= opcode_size <= MAX_OOB_OPCODE_SIZE and header[8] == 0x80 and header[9] <= pickle.HIGHEST_PROTOCOL
+
+
 def _load_model_artifact(path: Path):
   """Load legacy pickle artifacts and the streaming OOB format used by large GPU models."""
   with open_file_chunked(path) as artifact_file:
-    pickle_header = artifact_file.peek(2)[:2]
-    legacy_pickle = (
-      len(pickle_header) == 2 and pickle_header[0] == 0x80 and pickle_header[1] <= pickle.HIGHEST_PROTOCOL
-    )
-    if legacy_pickle:
-      return pickle.load(artifact_file)
+    oob_artifact = _is_oob_artifact_header(artifact_file.peek(10)[:10])
 
   with open_file_chunked(path) as artifact_file:
-    return load_oob(artifact_file)
+    return load_oob(artifact_file) if oob_artifact else pickle.load(artifact_file)
+
+
+def _normalize_model_artifact(artifact: dict) -> dict:
+  """Adapt the current metadata-only artifact envelope to StarPilot's explicit schema."""
+  if artifact.get("format_version") is not None:
+    if artifact["format_version"] != ARTIFACT_FORMAT_VERSION:
+      raise ValueError(
+        f"Unsupported model artifact format {artifact.get('format_version')!r}; "
+        f"expected {ARTIFACT_FORMAT_VERSION}"
+      )
+    return artifact
+
+  metadata = artifact.get("metadata")
+  if not isinstance(metadata, dict) or "run_policy" not in artifact:
+    raise ValueError("Unsupported metadata-only model artifact")
+
+  if "model" in metadata:
+    model_type = "supercombo"
+    policy_order = []
+    policy_shapes = metadata["model"]["input_shapes"]
+  else:
+    policy_order = [key for key in metadata if key != "vision"]
+    if not policy_order or "vision" not in metadata:
+      raise ValueError("Split model artifact is missing vision or policy metadata")
+    model_type = "vision_policy" if policy_order == ["policy"] else "vision_multi_policy"
+    policy_shapes = metadata[policy_order[0]]["input_shapes"]
+
+  return {
+    **artifact,
+    "format_version": ARTIFACT_FORMAT_VERSION,
+    "model_type": model_type,
+    "policy_order": policy_order,
+    "frame_skip": derive_frame_skip(policy_shapes),
+    "image_history_pipeline": IMAGE_HISTORY_IN_POLICY,
+    "warp_input_keys": FAST_WARP_INPUTS,
+    "policy_input_keys": FAST_POLICY_INPUTS,
+  }
 
 
 class ModelState:
@@ -422,28 +531,34 @@ class ModelState:
     return numpy_inputs, prev_desired_curv_key
 
   def __init__(self, cam_w: int, cam_h: int, external_gpu_active: bool = False,
-               model_id_override: str | None = None, write_model_version: bool = True):
+               model_id_override: str | None = None, write_model_version: bool = True,
+               model_version_override: str | None = None, model_path_override: Path | None = None,
+               force_external_gpu: bool = False):
     params = Params()
     selected_model = model_id_override or _resolve_mirrored_param(params, "Model", "DrivingModel") or BUILTIN_MODEL_KEY
     model_id = _canonical_model_id(selected_model)
     requires_external_gpu = model_uses_external_gpu(model_id)
+    if force_external_gpu and not external_gpu_active:
+      raise RuntimeError("an external GPU artifact cannot run without Chestnut")
     if requires_external_gpu and not external_gpu_active:
       cloudlog.error(f"Model {model_id} requires an external GPU; falling back to {BUILTIN_MODEL_KEY}")
       model_id = BUILTIN_MODEL_KEY
-    use_builtin = model_id == BUILTIN_MODEL_KEY
+    use_builtin = model_id == BUILTIN_MODEL_KEY and model_path_override is None
     loaded_builtin = use_builtin
-    if use_builtin:
+    if model_path_override is not None:
+      model_path = Path(model_path_override)
+    elif use_builtin:
       model_path = Path(__file__).parent / "models" / "driving_tinygrad.pkl"
     else:
       model_path = MODELS_PATH / f"{model_id}_driving_tinygrad.pkl"
 
-    if not file_chunked_exists(model_path) and not use_builtin:
+    if not file_chunked_exists(model_path) and not use_builtin and model_path_override is None:
       cloudlog.error(f"Missing model artifact {model_path}, downloading {model_id}...")
       try:
         ModelManager(params, params_memory).download_model(model_id)
       except Exception:
         cloudlog.exception(f"Failed to download model {model_id}")
-    if not file_chunked_exists(model_path) and not use_builtin:
+    if not file_chunked_exists(model_path) and not use_builtin and model_path_override is None:
       fallback_path = Path(__file__).parent / "models" / "driving_tinygrad.pkl"
       if file_chunked_exists(fallback_path):
         cloudlog.error(f"Falling back to builtin model artifact after {model_id} download failed")
@@ -453,14 +568,9 @@ class ModelState:
     if not file_chunked_exists(model_path):
       raise FileNotFoundError(model_path)
 
-    self.uses_external_gpu = external_gpu_active and requires_external_gpu and not loaded_builtin
-    artifact = (_load_model_artifact(model_path) if self.uses_external_gpu
-                else pickle.loads(read_file_chunked(str(model_path))))
-    if artifact.get("format_version") != ARTIFACT_FORMAT_VERSION:
-      raise ValueError(
-        f"Unsupported model artifact format {artifact.get('format_version')!r}; "
-        f"expected {ARTIFACT_FORMAT_VERSION}"
-      )
+    self.model_id = BUILTIN_MODEL_KEY if loaded_builtin else model_id
+    self.uses_external_gpu = external_gpu_active and (requires_external_gpu or force_external_gpu) and not loaded_builtin
+    artifact = _normalize_model_artifact(_load_model_artifact(model_path))
 
     self.model_type = artifact["model_type"]
     self.metadata = artifact["metadata"]
@@ -489,6 +599,8 @@ class ModelState:
 
     self.road_key, self.wide_key = _detect_vision_keys(input_shapes)
     self.vision_input_names = [self.road_key, self.wide_key]
+    self.warped_input_shape = (2, 6, *input_shapes[self.road_key][2:])
+    self.last_warp_output: Tensor | None = None
     self.numpy_inputs, self.prev_desired_curv_key = self._build_policy_inputs(self.policy_input_shapes)
     self.desire_key = next(key for key in self.numpy_inputs if key.startswith("desire"))
     self.off_policy_enabled = "off_policy" in self.policy_order
@@ -499,14 +611,15 @@ class ModelState:
     self.frame_buf_size = get_nv12_info(cam_w, cam_h)[3]
     self._blob_cache: dict[tuple[str, int], Tensor] = {}
 
-    model_version = _resolve_mirrored_param(params, "ModelVersion", "DrivingModelVersion")
+    model_version = str(model_version_override or "").strip()
+    if not model_version:
+      model_version = _resolve_mirrored_param(params, "ModelVersion", "DrivingModelVersion")
     if not model_version:
       model_version = str(artifact.get("behavior_version") or "")
     if not model_version:
       versions_path = MODELS_PATH / ".model_versions.json"
       if versions_path.is_file():
         try:
-          import json
           model_version = str(json.loads(versions_path.read_text()).get(model_id) or "")
         except Exception:
           pass
@@ -596,6 +709,7 @@ class ModelState:
     if self.prev_desired_curv_key is not None:
       self.full_prev_desired_curv.fill(0)
     self._blob_cache.clear()
+    self.last_warp_output = None
 
   def warmup(self) -> None:
     dummy_frames = {
@@ -621,16 +735,10 @@ class ModelState:
 
   def run(self, bufs: dict[str, VisionBuf], transforms: dict[str, np.ndarray],
           inputs: dict[str, np.ndarray], prepare_only: bool,
-          after_enqueue: Callable[[], None] | None = None) -> dict[str, np.ndarray] | None:
-    frames: dict[str, Tensor] = {}
-    for key, buf in bufs.items():
-      ptr = np.frombuffer(buf.data, dtype=np.uint8).ctypes.data
-      cache_key = (key, ptr)
-      if cache_key not in self._blob_cache:
-        self._blob_cache[cache_key] = Tensor.from_blob(
-          ptr, (self.frame_buf_size,), dtype="uint8", device=self.WARP_DEV,
-        )
-      frames[key] = self._blob_cache[cache_key]
+          after_enqueue: Callable[[], None] | None = None,
+          shared_warp: Tensor | None = None) -> dict[str, np.ndarray] | None:
+    if shared_warp is not None and self.image_history_pipeline != IMAGE_HISTORY_IN_POLICY:
+      raise RuntimeError("shared camera warp requires a policy-history model artifact")
 
     inputs[self.desire_key][0] = 0
     self.numpy_inputs[self.desire_key].fill(0)
@@ -647,18 +755,33 @@ class ModelState:
     self.npy["tfm"][:] = transforms[self.road_key]
     self.npy["big_tfm"][:] = transforms[self.wide_key]
 
-    warp_output = self.warp_enqueue(
-      **{key: self.input_queues[key] for key in self.warp_input_keys},
-      frame=frames[self.road_key],
-      big_frame=frames[self.wide_key],
-    )
+    if shared_warp is None:
+      frames: dict[str, Tensor] = {}
+      for key, buf in bufs.items():
+        ptr = np.frombuffer(buf.data, dtype=np.uint8).ctypes.data
+        cache_key = (key, ptr)
+        if cache_key not in self._blob_cache:
+          self._blob_cache[cache_key] = Tensor.from_blob(
+            ptr, (self.frame_buf_size,), dtype="uint8", device=self.WARP_DEV,
+          )
+        frames[key] = self._blob_cache[cache_key]
+
+      warp_output = self.warp_enqueue(
+        **{key: self.input_queues[key] for key in self.warp_input_keys},
+        frame=frames[self.road_key],
+        big_frame=frames[self.wide_key],
+      )
+    else:
+      warp_output = shared_warp
 
     if self.image_history_pipeline == IMAGE_HISTORY_IN_POLICY:
+      self.last_warp_output = warp_output
       output_tensors = self.run_policy(
         **{key: self.input_queues[key] for key in self.policy_input_keys},
         warped=warp_output,
       )
     else:
+      self.last_warp_output = None
       img, big_img = warp_output
       if prepare_only:
         return None
@@ -696,9 +819,16 @@ class ModelState:
 
 
 def _load_model_state(cam_w: int, cam_h: int, selected_model: str, external_gpu_requested: bool,
-                      params: Params) -> ModelState:
+                      params: Params, model_version: str = "", write_model_version: bool = True) -> ModelState:
   try:
-    return ModelState(cam_w, cam_h, external_gpu_requested)
+    return ModelState(
+      cam_w,
+      cam_h,
+      external_gpu_requested,
+      model_id_override=selected_model,
+      write_model_version=write_model_version,
+      model_version_override=model_version,
+    )
   except Exception:
     if selected_model == BUILTIN_MODEL_KEY:
       raise
@@ -710,10 +840,16 @@ def _load_model_state(cam_w: int, cam_h: int, selected_model: str, external_gpu_
       device_config = tinygrad_dev_config(False, TICI)
       DEV.value = device_config
       os.environ["DEV"] = device_config
-    return ModelState(cam_w, cam_h, False)
+    return ModelState(
+      cam_w,
+      cam_h,
+      False,
+      model_id_override=BUILTIN_MODEL_KEY,
+      write_model_version=write_model_version,
+    )
 
 
-def _load_external_gpu_model(cam_w: int, cam_h: int, selected_model: str,
+def _load_external_gpu_model(cam_w: int, cam_h: int, selected_model: str, model_version: str = "",
                              CP=None, demo: bool = False) -> ModelState | None:
   """Load and warm the USB-GPU model without running another tinygrad model concurrently."""
   candidate = None
@@ -728,6 +864,7 @@ def _load_external_gpu_model(cam_w: int, cam_h: int, selected_model: str,
       True,
       model_id_override=selected_model,
       write_model_version=False,
+      model_version_override=model_version,
     )
     if not candidate.uses_external_gpu:
       raise RuntimeError("external GPU model resolved to the builtin model")
@@ -741,6 +878,158 @@ def _load_external_gpu_model(cam_w: int, cam_h: int, selected_model: str,
     _set_hcq_wait_timeout(BIG_MODEL_RUN_WAIT_TIMEOUT_MS)
 
 
+def _model_versions() -> dict[str, str]:
+  versions_path = MODELS_PATH / ".model_versions.json"
+  try:
+    payload = json.loads(versions_path.read_text())
+    return {str(key): str(value) for key, value in payload.items()} if isinstance(payload, dict) else {}
+  except (OSError, TypeError, ValueError):
+    return {}
+
+
+def _load_model_lab_model(cam_w: int, cam_h: int, model_id: str, version: str) -> ModelState:
+  if not model_accelerator_artifact_available(model_id) or not model_accelerator_artifact_installed(model_id):
+    raise RuntimeError(f"Model Laboratory AMD artifact is unavailable for {model_id}")
+  candidate = ModelState(
+    cam_w,
+    cam_h,
+    True,
+    model_id_override=model_id,
+    write_model_version=False,
+    model_version_override=version,
+    model_path_override=model_accelerator_artifact_path(model_id),
+    force_external_gpu=True,
+  )
+  if candidate.model_id != _canonical_model_id(model_id) or not candidate.uses_external_gpu:
+    raise RuntimeError(f"Model Laboratory failed to load {model_id} on AMD")
+  return candidate
+
+
+def _model_lab_shared_warp_compatible(lateral: ModelState, longitudinal: ModelState) -> bool:
+  return (
+    lateral.image_history_pipeline == IMAGE_HISTORY_IN_POLICY
+    and longitudinal.image_history_pipeline == IMAGE_HISTORY_IN_POLICY
+    and lateral.warped_input_shape == longitudinal.warped_input_shape
+    and lateral.WARP_DEV == longitudinal.WARP_DEV
+  )
+
+
+def _isolate_next_model_artifact_load() -> int:
+  from tinygrad.uop.ops import Ops, UOpMetaClass
+
+  buffer_keys = [key for key in UOpMetaClass.ucache if key[0] is Ops.BUFFER]
+  for key in buffer_keys:
+    UOpMetaClass.ucache.pop(key, None)
+  return len(buffer_keys)
+
+
+def _load_model_lab_models(cam_w: int, cam_h: int, lateral_id: str, longitudinal_id: str,
+                           lateral_version: str, longitudinal_version: str,
+                           CP=None, demo: bool = False) -> tuple[ModelState, ModelState] | None:
+  try:
+    if not demo:
+      wait_for_external_gpu_power_ready(CP)
+    _set_hcq_wait_timeout(BIG_MODEL_LOAD_WAIT_TIMEOUT_MS)
+    wait_usbgpu_link()
+    _isolate_next_model_artifact_load()
+    lateral = _load_model_lab_model(cam_w, cam_h, lateral_id, lateral_version)
+    lateral.warmup()
+    evicted = _isolate_next_model_artifact_load()
+    cloudlog.info(f"Model Laboratory isolated {evicted} realized buffer UOps before loading the second model")
+    longitudinal = _load_model_lab_model(cam_w, cam_h, longitudinal_id, longitudinal_version)
+    longitudinal.warmup()
+    if not _model_lab_shared_warp_compatible(lateral, longitudinal):
+      raise RuntimeError("Model Laboratory artifacts cannot share camera preprocessing")
+    cloudlog.info("Model Laboratory will share one camera warp between both AMD model runners")
+    return lateral, longitudinal
+  except Exception:
+    cloudlog.exception("Model Laboratory AMD model load or warmup failed")
+    return None
+  finally:
+    _close_tinygrad_disk_cache_connection()
+    _set_hcq_wait_timeout(BIG_MODEL_RUN_WAIT_TIMEOUT_MS)
+
+
+def _model_outputs_finite(*outputs: dict[str, np.ndarray]) -> bool:
+  return all(
+    np.isfinite(value).all()
+    for output in outputs
+    for value in output.values()
+    if isinstance(value, np.ndarray)
+  )
+
+def _model_lab_runtime_request(params: Params, chestnut_ready: bool) -> tuple[dict, str | None]:
+  config = load_model_lab_config(params)
+  if not config["enabled"]:
+    return config, None
+  if not chestnut_ready:
+    return config, "Chestnut is not connected and firmware-ready"
+
+  lateral_id = _canonical_model_id(config["lateralModel"])
+  longitudinal_id = _canonical_model_id(config["longitudinalModel"])
+  config.update({"lateralModel": lateral_id, "longitudinalModel": longitudinal_id})
+  if not lateral_id or not longitudinal_id:
+    return config, "both model roles must be selected"
+  if lateral_id == longitudinal_id:
+    return config, "the lateral and longitudinal models must be different"
+
+  versions = _model_versions()
+  for role, model_id in (("lateral", lateral_id), ("longitudinal", longitudinal_id)):
+    metadata = load_model_artifact_metadata(model_id)
+    version = versions.get(model_id, "")
+    if not model_lab_manifest_eligible(metadata, version):
+      return config, f"{role} model {model_id} is not a compatible small model"
+    if not model_accelerator_artifact_available(model_id):
+      return config, f"{role} model {model_id} has no precompiled AMD artifact in the manifest"
+    if not model_accelerator_artifact_installed(model_id):
+      return config, f"{role} model {model_id} AMD artifact is not installed by Model Manager"
+  return config, None
+
+
+def _set_model_lab_runtime(params: Params, *, requested: bool, active: bool,
+                           config: dict | None = None, error: str = "") -> None:
+  config = config or {}
+  params.put(MODEL_LAB_RUNTIME_PARAM, {
+    "requested": bool(requested),
+    "active": bool(active),
+    "lateralModel": str(config.get("lateralModel") or ""),
+    "longitudinalModel": str(config.get("longitudinalModel") or ""),
+    "schedule": "sequential_20hz" if requested else "",
+    "executionDevice": "AMD" if active else "",
+    "error": str(error or ""),
+  })
+
+
+def _runner_frame_args(model: ModelState, buf_main, buf_extra,
+                       model_transform_main: np.ndarray, model_transform_extra: np.ndarray,
+                       vec_desire: np.ndarray, traffic_convention: np.ndarray,
+                       lat_action_t: float, long_action_t: float,
+                       prev_action: log.ModelDataV2.Action, v_ego: float,
+                       lateral_control_params: np.ndarray) -> tuple[dict, dict, dict[str, np.ndarray]]:
+  bufs = {
+    model.road_key: buf_main,
+    model.wide_key: buf_extra,
+  }
+  transforms = {
+    model.road_key: model_transform_main,
+    model.wide_key: model_transform_extra,
+  }
+  inputs: dict[str, np.ndarray] = {
+    model.desire_key: vec_desire,
+    "traffic_convention": traffic_convention,
+  }
+  if "action_t" in model.numpy_inputs or (model.off_policy_enabled and "action_t" in model.off_policy_numpy_inputs):
+    inputs["action_t"] = np.array([lat_action_t, long_action_t], dtype=np.float32)
+  if "prev_action" in model.numpy_inputs or (model.off_policy_enabled and "prev_action" in model.off_policy_numpy_inputs):
+    inputs["prev_action"] = np.array([
+      prev_action.desiredCurvature * max(1.0, v_ego) ** 2,
+      prev_action.desiredAcceleration,
+    ], dtype=np.float32)
+  if "lateral_control_params" in model.numpy_inputs:
+    inputs["lateral_control_params"] = lateral_control_params
+  return bufs, transforms, inputs
+
+
 def main(demo=False):
   cloudlog.warning("modeld init")
 
@@ -750,16 +1039,31 @@ def main(demo=False):
   config_realtime_process(7, 54)
 
   params = Params()
-  selected_model = _canonical_model_id(_resolve_mirrored_param(params, "Model", "DrivingModel") or BUILTIN_MODEL_KEY)
   usbgpu_present_now = usbgpu_present()
-  external_model_selected = model_uses_external_gpu(selected_model)
-  external_artifact = MODELS_PATH / f"{selected_model}_driving_tinygrad.pkl"
+  small_model_id, _, small_model_version = get_model_profile(params, "small")
+  big_model_id, _, big_model_version = get_model_profile(params, "big")
+  small_model_id = _canonical_model_id(small_model_id or BUILTIN_MODEL_KEY)
+  big_model_id = _canonical_model_id(big_model_id)
+  selected_model = big_model_id if usbgpu_present_now and big_model_id else small_model_id
+  selected_model_version = big_model_version if selected_model == big_model_id else small_model_version
+  model_lab_config, model_lab_error = _model_lab_runtime_request(params, usbgpu_present_now)
+  model_lab_requested = bool(model_lab_config["enabled"])
+  model_lab_ready = model_lab_requested and model_lab_error is None
+  external_model_selected = bool(big_model_id) and model_uses_external_gpu(big_model_id)
+  external_artifact = MODELS_PATH / f"{big_model_id}_driving_tinygrad.pkl"
   external_artifact_ready = external_model_selected and file_chunked_exists(external_artifact)
-  external_gpu_requested = usbgpu_present_now and external_model_selected
+  external_gpu_requested = usbgpu_present_now and (bool(big_model_id) or model_lab_ready)
   params.put_bool("UsbGpuPresent", usbgpu_present_now)
-  params.put_bool("UsbGpuCompiled", external_artifact_ready)
+  params.put_bool("UsbGpuCompiled", external_artifact_ready or model_lab_ready)
   params.put_bool("UsbGpuActive", False)
   params.put_bool("UsbGpuLoading", external_gpu_requested)
+  _set_model_lab_runtime(
+    params,
+    requested=model_lab_requested,
+    active=False,
+    config=model_lab_config,
+    error=model_lab_error or "",
+  )
 
   # visionipc clients
   while True:
@@ -789,8 +1093,50 @@ def main(demo=False):
   model = None
   small_model = None
   big_model = None
+  model_lab_longitudinal = None
+  model_lab_active = False
+  model_lab_timings: list[float] = []
   CP = None
-  if external_gpu_requested:
+  if model_lab_ready:
+    if demo:
+      CP = get_demo_car_params()
+    else:
+      CP = messaging.log_from_bytes(params.get("CarParams", block=True), car.CarParams)
+    small_model = _load_model_state(
+      vipc_client_main.width,
+      vipc_client_main.height,
+      small_model_id,
+      False,
+      params,
+      small_model_version,
+      False,
+    )
+    versions = _model_versions()
+    lateral_id = model_lab_config["lateralModel"]
+    longitudinal_id = model_lab_config["longitudinalModel"]
+    pair = _load_model_lab_models(
+      vipc_client_main.width,
+      vipc_client_main.height,
+      lateral_id,
+      longitudinal_id,
+      versions[lateral_id],
+      versions[longitudinal_id],
+      CP,
+      demo,
+    )
+    if pair is not None:
+      model, model_lab_longitudinal = pair
+      model_lab_active = True
+      params.put("ModelVersion", model.policy_generation)
+      params.put("DrivingModelVersion", model.policy_generation)
+    else:
+      model_lab_error = "one or both precompiled AMD models failed to load; using the active small model"
+      cloudlog.error(f"Model Laboratory unavailable: {model_lab_error}")
+      model = small_model
+      params.put("ModelVersion", model.policy_generation)
+      params.put("DrivingModelVersion", model.policy_generation)
+
+  elif external_gpu_requested:
     if demo:
       CP = get_demo_car_params()
     else:
@@ -800,28 +1146,48 @@ def main(demo=False):
       vipc_client_main.width,
       vipc_client_main.height,
       selected_model,
+      selected_model_version,
       CP,
       demo,
     )
 
-    small_model = ModelState(
+    small_model = _load_model_state(
       vipc_client_main.width,
       vipc_client_main.height,
+      small_model_id,
       False,
-      model_id_override=BUILTIN_MODEL_KEY,
-      write_model_version=False,
+      params,
+      small_model_version,
+      False,
     )
     model = big_model if big_model is not None else small_model
     if big_model is not None:
       params.put("ModelVersion", model.policy_generation)
       params.put("DrivingModelVersion", model.policy_generation)
   else:
-    model = _load_model_state(vipc_client_main.width, vipc_client_main.height, selected_model, False, params)
+    model = _load_model_state(
+      vipc_client_main.width,
+      vipc_client_main.height,
+      selected_model,
+      False,
+      params,
+      selected_model_version,
+    )
 
-  external_gpu_active = model.uses_external_gpu
-  params.put_bool("UsbGpuCompiled", external_model_selected and file_chunked_exists(external_artifact))
+  if not model_lab_active:
+    set_runtime_model_params(params, model.model_id, model.policy_generation)
+
+  external_gpu_active = model_lab_active or model.uses_external_gpu
+  params.put_bool("UsbGpuCompiled", external_artifact_ready or model_lab_ready)
   params.put_bool("UsbGpuActive", external_gpu_active)
   params.put_bool("UsbGpuLoading", False)
+  _set_model_lab_runtime(
+    params,
+    requested=model_lab_requested,
+    active=model_lab_active,
+    config=model_lab_config,
+    error=model_lab_error or "",
+  )
   cloudlog.warning(f"models loaded in {time.monotonic() - start_time:.1f}s, modeld starting")
 
   # messaging
@@ -945,39 +1311,42 @@ def main(demo=False):
       frames_dropped = 0.
     run_count = run_count + 1
 
-    frame_drop_ratio = frames_dropped / (1 + frames_dropped)
-    prepare_only = model.can_prepare_only and vipc_dropped_frames > 0
-    if prepare_only:
-      cloudlog.error(f"skipping model eval. Dropped {vipc_dropped_frames} frames")
+    if model_lab_active and run_count % ModelConstants.MODEL_FREQ == 0 and not usbgpu_present():
+      model_lab_active = False
+      model_lab_longitudinal = None
+      if small_model is None:
+        raise RuntimeError("Model Laboratory has no active small fallback model")
+      model = small_model
+      external_gpu_active = False
+      model_lab_error = "Chestnut disconnected; using the active small model"
+      params.put_bool("UsbGpuPresent", False)
+      params.put_bool("UsbGpuActive", False)
+      params.put("ModelVersion", model.policy_generation)
+      params.put("DrivingModelVersion", model.policy_generation)
+      set_runtime_model_params(params, model.model_id, model.policy_generation)
+      _set_model_lab_runtime(
+        params,
+        requested=model_lab_requested,
+        active=False,
+        config=model_lab_config,
+        error=model_lab_error,
+      )
+      if chestnut_state is not None:
+        chestnut_state.big = False
+      cloudlog.error(f"Model Laboratory stopped: {model_lab_error}")
 
-    bufs = {
-      model.road_key: buf_main,
-      model.wide_key: buf_extra,
-    }
-    transforms = {
-      model.road_key: model_transform_main,
-      model.wide_key: model_transform_extra,
-    }
+    frame_drop_ratio = frames_dropped / (1 + frames_dropped)
+    dropped_frame = vipc_dropped_frames > 0
+    if dropped_frame and (model.can_prepare_only or (model_lab_longitudinal is not None and model_lab_longitudinal.can_prepare_only)):
+      cloudlog.error(f"skipping model eval. Dropped {vipc_dropped_frames} frames")
 
     frame_delay = DT_MDL  # Average time elapsed since the current frame finished exposing.
     action_delay = DT_MDL / 2  # Target the midpoint between current output and the next model step.
     lat_action_t = lat_delay + frame_delay + action_delay
     long_action_t = long_delay + frame_delay + action_delay
 
-    inputs:dict[str, np.ndarray] = {
-      model.desire_key: vec_desire,
-      'traffic_convention': traffic_convention,
-    }
-    if 'action_t' in model.numpy_inputs or (model.off_policy_enabled and 'action_t' in model.off_policy_numpy_inputs):
-      inputs['action_t'] = np.array([lat_action_t, long_action_t], dtype=np.float32)
-    if 'prev_action' in model.numpy_inputs or (model.off_policy_enabled and 'prev_action' in model.off_policy_numpy_inputs):
-      inputs['prev_action'] = np.array([
-        prev_action.desiredCurvature * max(1.0, v_ego) ** 2,
-        prev_action.desiredAcceleration,
-      ], dtype=np.float32)
-    # Include optional inputs only if the loaded model expects them
-    if 'lateral_control_params' in model.numpy_inputs:
-      inputs['lateral_control_params'] = lateral_control_params
+    lateral_model_output = None
+    longitudinal_model_output = None
 
     mt1 = time.perf_counter()
     try:
@@ -985,23 +1354,85 @@ def main(demo=False):
         chestnut_state is not None and
         run_count % round(ModelConstants.MODEL_FREQ / SERVICE_LIST["chestnutState"].frequency) == 0
       )
-      model_output = model.run(
-        bufs,
-        transforms,
-        inputs,
-        prepare_only,
-        chestnut_state.send if send_chestnut else None,
-      )
+      if model_lab_longitudinal is not None:
+        lateral_bufs, lateral_transforms, lateral_inputs = _runner_frame_args(
+          model, buf_main, buf_extra, model_transform_main, model_transform_extra,
+          vec_desire, traffic_convention, lat_action_t, long_action_t,
+          prev_action, v_ego, lateral_control_params,
+        )
+        lateral_model_output = model.run(
+          lateral_bufs,
+          lateral_transforms,
+          lateral_inputs,
+          model.can_prepare_only and dropped_frame,
+        )
+        if model.last_warp_output is None:
+          raise RuntimeError("Model Laboratory lateral runner did not produce a shareable camera warp")
+        longitudinal_bufs, longitudinal_transforms, longitudinal_inputs = _runner_frame_args(
+          model_lab_longitudinal, buf_main, buf_extra, model_transform_main, model_transform_extra,
+          vec_desire, traffic_convention, lat_action_t, long_action_t,
+          prev_action, v_ego, lateral_control_params,
+        )
+        longitudinal_model_output = model_lab_longitudinal.run(
+          longitudinal_bufs,
+          longitudinal_transforms,
+          longitudinal_inputs,
+          model_lab_longitudinal.can_prepare_only and dropped_frame,
+          chestnut_state.send if send_chestnut else None,
+          shared_warp=model.last_warp_output,
+        )
+        if (
+          lateral_model_output is not None
+          and longitudinal_model_output is not None
+          and not _model_outputs_finite(lateral_model_output, longitudinal_model_output)
+        ):
+          raise RuntimeError("Model Laboratory produced non-finite output")
+        model_output = (
+          compose_model_outputs(lateral_model_output, longitudinal_model_output, longitudinal_model_output)
+          if lateral_model_output is not None and longitudinal_model_output is not None
+          else None
+        )
+      else:
+        bufs, transforms, inputs = _runner_frame_args(
+          model, buf_main, buf_extra, model_transform_main, model_transform_extra,
+          vec_desire, traffic_convention, lat_action_t, long_action_t,
+          prev_action, v_ego, lateral_control_params,
+        )
+        model_output = model.run(
+          bufs,
+          transforms,
+          inputs,
+          model.can_prepare_only and dropped_frame,
+          chestnut_state.send if send_chestnut else None,
+        )
+        lateral_model_output = model_output
     except Exception:
-      if not external_gpu_active or small_model is None:
-        raise
-      cloudlog.exception("external GPU model failed, falling back to builtin model")
+      if model_lab_active:
+        cloudlog.exception("Model Laboratory inference failed, falling back to the active small model")
+        if small_model is None:
+          raise RuntimeError("Model Laboratory has no active small fallback model") from None
+        model = small_model
+        model_lab_longitudinal = None
+        model_lab_active = False
+        model_lab_error = "Model Laboratory inference failed; using the active small model"
+        _set_model_lab_runtime(
+          params,
+          requested=model_lab_requested,
+          active=False,
+          config=model_lab_config,
+          error=model_lab_error,
+        )
+      else:
+        if not external_gpu_active or small_model is None:
+          raise
+        cloudlog.exception("external GPU model failed, falling back to active small model")
+        model = small_model
+        big_model = None
       params.put_bool("UsbGpuActive", False)
-      model = small_model
-      big_model = None
       external_gpu_active = False
       params.put("ModelVersion", model.policy_generation)
       params.put("DrivingModelVersion", model.policy_generation)
+      set_runtime_model_params(params, model.model_id, model.policy_generation)
       params.put_bool("UsbGpuLoading", False)
       if chestnut_state is not None:
         chestnut_state.big = False
@@ -1010,6 +1441,16 @@ def main(demo=False):
 
     mt2 = time.perf_counter()
     model_execution_time = mt2 - mt1
+    if model_lab_active and model_lab_longitudinal is not None:
+      model_lab_timings.append(model_execution_time * 1000)
+      if run_count % (ModelConstants.MODEL_FREQ * 10) == 0:
+        timing_summary = "/".join((
+          f"p50:{np.percentile(model_lab_timings, 50):.1f}",
+          f"p95:{np.percentile(model_lab_timings, 95):.1f}",
+          f"max:{max(model_lab_timings):.1f}ms",
+        ))
+        cloudlog.warning(f"Model Laboratory timing (two AMD models at 20 Hz): {timing_summary}")
+        model_lab_timings = []
 
     if model_output is not None and vipc_dropped_frames > 0:
       cloudlog.error(f"suppressing model output after dropping {vipc_dropped_frames} frames")
@@ -1020,13 +1461,31 @@ def main(demo=False):
       drivingdata_send = messaging.new_message('drivingModelData')
       posenet_send = messaging.new_message('cameraOdometry')
 
-      action = get_action_from_model(
-        model_output, prev_action,
-        lat_action_t,
-        long_action_t,
-        v_ego, model.mlsim, model.is_v9, model.is_v14, model.is_v15, starpilot_toggles,
-        lat_smooth_seconds, long_smooth_seconds, is_v16=model.is_v16,
-      )
+      if model_lab_active and longitudinal_model_output is not None:
+        lateral_action = get_action_from_model(
+          lateral_model_output, prev_action,
+          lat_action_t,
+          long_action_t,
+          v_ego, model.mlsim, model.is_v9, model.is_v14, model.is_v15, starpilot_toggles,
+          lat_smooth_seconds, long_smooth_seconds, is_v16=model.is_v16,
+        )
+        longitudinal_action = get_action_from_model(
+          longitudinal_model_output, prev_action,
+          lat_action_t,
+          long_action_t,
+          v_ego, model_lab_longitudinal.mlsim, model_lab_longitudinal.is_v9,
+          model_lab_longitudinal.is_v14, model_lab_longitudinal.is_v15, starpilot_toggles,
+          lat_smooth_seconds, long_smooth_seconds, is_v16=model_lab_longitudinal.is_v16,
+        )
+        action = log.ModelDataV2.Action(**hybrid_action_values(lateral_action, longitudinal_action))
+      else:
+        action = get_action_from_model(
+          model_output, prev_action,
+          lat_action_t,
+          long_action_t,
+          v_ego, model.mlsim, model.is_v9, model.is_v14, model.is_v15, starpilot_toggles,
+          lat_smooth_seconds, long_smooth_seconds, is_v16=model.is_v16,
+        )
       prev_action = action
       fill_model_msg(drivingdata_send, modelv2_send, model_output, action,
                      publish_state, meta_main.frame_id, meta_extra.frame_id, frame_id,

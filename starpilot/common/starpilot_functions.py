@@ -381,6 +381,8 @@ def update_maps(now, params, params_memory, manual_update=False):
   if maps_downloaded and params.get("LastMapsUpdate") == todays_date and not manual_update:
     return
 
+  params_memory.put_bool("DownloadMaps", True)
+
   pm = messaging.PubMaster(["mapdIn"])
   sm = messaging.SubMaster(["mapdExtendedOut"])
 

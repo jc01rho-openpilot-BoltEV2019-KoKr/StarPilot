@@ -14,6 +14,7 @@ from openpilot.system.ui.lib.application import ASSETS_DIR, gui_app, FontWeight,
 from openpilot.selfdrive.ui.lib.mode_banner import ModeBannerVariant, get_mode_banner_variant, mode_atom_color
 from openpilot.selfdrive.ui.lib.starpilot_version import STARPILOT_DISPLAY_VERSION
 from openpilot.selfdrive.ui.ui_state import ui_state
+from openpilot.starpilot.common.model_lab import model_lab_pair_display_name_from_params
 
 HEAD_BUTTON_FONT_SIZE = 40
 HOME_PADDING = 8
@@ -196,7 +197,8 @@ class MiciHomeLayout(Widget):
     def _clean_model_name(value: str) -> str:
       return re.sub(r"[🗺️👀📡]", "", value).replace("(Default)", "").strip()
 
-    current_name = _clean_model_name(ui_state.params.get("DrivingModelName", encoding="utf-8") or "")
+    current_name = (model_lab_pair_display_name_from_params(ui_state.params) or
+                    _clean_model_name(ui_state.params.get("DrivingModelName", encoding="utf-8") or ""))
     if not current_name:
       default_name = ui_state.params.get_default_value("DrivingModelName")
       if isinstance(default_name, bytes):

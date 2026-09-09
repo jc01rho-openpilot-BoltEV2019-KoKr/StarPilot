@@ -43,7 +43,6 @@
 #define VOLVO_ANGLE_DEG_TO_CAN 17.869907f
 #define VOLVO_MAX_ANGLE_CAN 9650
 #define VOLVO_RELAY_ANGLE_TOLERANCE 54  // approximately 3 degrees
-#define VOLVO_DRIVER_OVERRIDE 5
 
 
 // CAN bus definitions for Volvo
@@ -83,8 +82,6 @@ static const AngleSteeringLimits VOLVO_ANGLE_STEERING_LIMITS = {
 };
 
 static void volvo_rx_hook(const CANPacket_t *msg) {
-  // Monitor the vehicle state required for cruise, disengagement, and angle
-  // safety. All steering TX frames are separately constrained in volvo_tx_hook.
 
   // Main bus (bus 0) messages
   if (msg->bus == VOLVO_MAIN_BUS) {
@@ -148,13 +145,11 @@ static void volvo_rx_hook(const CANPacket_t *msg) {
 
     // DRIVER_INPUT is the signal consumed by carstate.py for driver torque.
     // The PSCM frame's DRIVER_INPUT_DEVIATION is a different signal and must
-    // not be substituted here: doing so leaves the hardware disengage path blind.
     if (msg->addr == VOLVO_DRIVER_INPUT) {
       // STEERING_DRIVER_INPUT is a Motorola signal starting at bit 55. The
       // DBC also carries a +1 offset, so its raw byte is data[6].
       const int driver_input = to_signed(msg->data[6], 8) + 1;
       update_sample(&torque_driver, driver_input);
-      steering_disengage = SAFETY_ABS(driver_input) > VOLVO_DRIVER_OVERRIDE;
     }
 
   }

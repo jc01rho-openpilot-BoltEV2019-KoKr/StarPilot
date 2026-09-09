@@ -1,36 +1,28 @@
 import { api, showSnackbar } from "../api.js"
 import { GalaxySection } from "../components/GalaxySection.js"
-import { GalaxyEmbed } from "../components/GalaxyEmbed.js"
+import { MapsPanel } from "../components/MapsPanel.js"
+import { NavigationKeysPanel } from "../components/NavigationKeysPanel.js"
+import { SpeedLimitsPanel } from "../components/SpeedLimitsPanel.js"
+import { GalaxyTabs } from "../components/GalaxyTabs.js"
 import { useTabRouting } from "../composables.js"
+
+const TABS = {
+  nav: "Destination",
+  maps: "Maps",
+  keys: "App Keys",
+  speeds: "Speed Limits",
+}
 
 export const Navigation = {
   name: "Navigation",
-  components: { GalaxySection, GalaxyEmbed },
+  components: { GalaxySection, MapsPanel, NavigationKeysPanel, SpeedLimitsPanel, GalaxyTabs },
   data() {
-    return { destination: "", favorites: [], navLoading: true }
+    return { TABS, destination: "", favorites: [], navLoading: true }
   },
   setup() {
     return useTabRouting("/navigation", {
       nav: "", maps: "maps", keys: "keys", speeds: "speeds",
     })
-  },
-  computed: {
-    embedSrc() {
-      const sources = {
-        maps: "/manage_maps",
-        keys: "/manage_navigation_keys",
-        speeds: "/download_speed_limits",
-      }
-      return sources[this.tab] || ""
-    },
-    embedTitle() {
-      const titles = {
-        maps: "Maps",
-        keys: "App Keys",
-        speeds: "Speed Limits",
-      }
-      return titles[this.tab] || "Navigation"
-    },
   },
   mounted() { this.loadNavigation() },
   methods: {
@@ -60,12 +52,7 @@ export const Navigation = {
     <div class="gx-view">
       <h2 style="margin-top:0;">Navigation & Maps</h2>
 
-      <div class="gx-tabs" style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap;">
-        <button type="button" class="gx-chip" :style="tab==='nav'?'background:var(--primary);color:var(--on-primary);':''" @click="selectTab('nav')">Destination</button>
-        <button type="button" class="gx-chip" :style="tab==='maps'?'background:var(--primary);color:var(--on-primary);':''" @click="selectTab('maps')">Maps</button>
-        <button type="button" class="gx-chip" :style="tab==='keys'?'background:var(--primary);color:var(--on-primary);':''" @click="selectTab('keys')">App Keys</button>
-        <button type="button" class="gx-chip" :style="tab==='speeds'?'background:var(--primary);color:var(--on-primary);':''" @click="selectTab('speeds')">Speed Limits</button>
-      </div>
+      <GalaxyTabs :items="TABS" :active="tab" @select="selectTab" />
 
       <template v-if="tab === 'nav'">
         <GalaxySection title="Navigation Destination" icon="bi-geo-alt-fill">
@@ -83,7 +70,17 @@ export const Navigation = {
         </GalaxySection>
       </template>
 
-      <GalaxyEmbed v-else-if="embedSrc" :src="embedSrc" :title="embedTitle" />
+      <template v-if="tab === 'maps'">
+        <MapsPanel />
+      </template>
+
+      <template v-if="tab === 'keys'">
+        <NavigationKeysPanel />
+      </template>
+
+      <template v-if="tab === 'speeds'">
+        <SpeedLimitsPanel />
+      </template>
     </div>
   `,
 }

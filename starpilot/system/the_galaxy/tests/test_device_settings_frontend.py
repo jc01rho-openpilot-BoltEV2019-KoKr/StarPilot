@@ -46,6 +46,31 @@ def test_device_settings_uses_the_params_api_and_layout_json():
   assert 'fetch("/assets/components/tools/device_settings_layout.json?v=settings-tier-1"' in source
 
 
+def test_device_settings_speed_units_follow_the_vehicle():
+  source = _device_settings()
+
+  assert 'from "/assets/mobile/js/params.js"' in source
+  assert "resolveVehicleUnitParam" in source
+  assert "formatNumericParamValue" in source
+  assert "unit_search_terms" in source
+  assert "per click" in source
+  assert "ds-unit-note" not in source
+
+
+def test_device_settings_supports_vehicle_make_exclusions():
+  source = _device_settings()
+
+  assert "excluded_vehicle_makes" in source
+
+
+def test_lane_center_offset_can_step_below_zero():
+  source = _device_settings()
+
+  assert 'if (param.key === "LaneCenterOffset")' in source
+  assert "return { min: -0.3, max: 0.3, step: 0.01 }" in source
+  assert "canStepNumericParam(p, -1)" in source
+
+
 def test_developer_mode_notice_has_styles():
   css = DEVICE_SETTINGS_CSS_PATH.read_text(encoding="utf-8")
 

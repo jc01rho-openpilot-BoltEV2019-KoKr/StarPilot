@@ -84,6 +84,8 @@ def test_controller_action_options_include_vehicle_controls():
   assert options[wheel_controlsd.CONTROLLER_ACTION_PULSE_AND_GLIDE]["label"] == "Pulse and Glide"
   assert options[wheel_controlsd.CONTROLLER_ACTION_FORCE_COAST]["label"] == "Force Coasting"
   assert options[wheel_controlsd.CONTROLLER_ACTION_TOGGLE_AOL]["label"] == "Toggle AOL"
+  assert options[wheel_controlsd.CONTROLLER_ACTION_ENGAGE]["label"] == "Engage Openpilot"
+  assert options[wheel_controlsd.CONTROLLER_ACTION_DISENGAGE]["label"] == "Disengage Openpilot"
 
 
 def test_joystick_selection_is_explicit_and_exclusive():
@@ -232,6 +234,27 @@ def test_controller_actions_trigger_runtime_counters():
     "WheelControlPulseGlideCounter": 1,
     "WheelControlForceCoastCounter": 1,
     "WheelControlAOLCounter": 1,
+  }
+
+
+def test_controller_openpilot_actions_require_onroad_and_use_independent_counters():
+  params = FakeParams({
+    wheel_controlsd.CONTROLLER_ACTIONS_PARAM: [
+      {"enabled": True, "key": wheel_controlsd.CONTROLLER_ACTION_ENGAGE, "label": "Engage Openpilot"},
+      {"enabled": True, "key": wheel_controlsd.CONTROLLER_ACTION_DISENGAGE, "label": "Disengage Openpilot"},
+    ],
+  })
+  memory = FakeParams()
+
+  assert not wheel_controlsd.execute_controller_action(0, params, memory)
+  assert memory.values == {}
+
+  params.values["IsOnroad"] = True
+  assert wheel_controlsd.execute_controller_action(0, params, memory)
+  assert wheel_controlsd.execute_controller_action(1, params, memory)
+  assert memory.values == {
+    "WheelControlEngageCounter": 1,
+    "WheelControlDisengageCounter": 1,
   }
 
 

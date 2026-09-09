@@ -11,6 +11,7 @@ from openpilot.selfdrive.selfdrived.selfdrived import (
   VALID_ONLY_COMM_ISSUE_GRACE_FRAMES,
   SelfdriveD,
   commanded_torque_at_max_for_saturation,
+  controller_openpilot_event,
   evaluate_comm_issue,
 )
 
@@ -40,6 +41,26 @@ def test_route_length_validity_cascade_stays_silent():
 def test_dead_or_slow_comm_issue_is_immediate():
   assert evaluate_comm_issue(False, False, True, 0) == (True, 0)
   assert evaluate_comm_issue(False, True, False, 0) == (True, 0)
+
+
+def test_controller_openpilot_requests_use_normal_engagement_events():
+  CP = car.CarParams.new_message(pcmCruise=False)
+  CS = car.CarState.new_message(canValid=True)
+
+  assert controller_openpilot_event(CP, CS, False, True, False) == log.OnroadEvent.EventName.buttonEnable
+  assert controller_openpilot_event(CP, CS, True, False, True) == log.OnroadEvent.EventName.buttonCancel
+  assert controller_openpilot_event(CP, CS, True, True, True) == log.OnroadEvent.EventName.buttonCancel
+
+
+def test_controller_engage_requires_valid_can_and_active_pcm_cruise():
+  CP = car.CarParams.new_message(pcmCruise=True)
+  CS = car.CarState.new_message(canValid=True)
+
+  assert controller_openpilot_event(CP, CS, False, True, False) is None
+  CS.cruiseState.enabled = True
+  assert controller_openpilot_event(CP, CS, False, True, False) == log.OnroadEvent.EventName.buttonEnable
+  CS.canValid = False
+  assert controller_openpilot_event(CP, CS, False, True, False) is None
 
 
 def test_starpilot_selfdrive_state_uses_sampled_car_state_speed():

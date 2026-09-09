@@ -31,12 +31,12 @@ OPENPILOT_REPO = "commaai/openpilot"
 RESOURCES_REPO = os.environ.get("STARPILOT_RESOURCES_REPO", "firestar5683/StarPilot-Resources")
 HF_BUCKET = os.environ.get("STARPILOT_HF_BUCKET", "StarPilot-Driving/StarPilot-Resources")
 RESOURCE_BRANCH = "Models"
-MANIFEST_VERSION = "v24"
+MANIFEST_VERSION = "v25"
 DEFAULT_BEHAVIOR_VERSION = "v16"
 DEVICE_ROOT = "/data/openpilot"
 REPOSITORY_FILE_LIMIT = 100_000_000
 LFS_POINTER_PREFIX = b"version https://git-lfs.github.com/spec/v1"
-CHUNK_SUFFIX_RE = re.compile(r"\.p\d{2}$")
+CHUNK_SUFFIX_RE = re.compile(r"\.chunk\d{2}of\d{2}$")
 SHA_RE = re.compile(r"(?<![0-9a-f])([0-9a-f]{40})(?![0-9a-f])", re.IGNORECASE)
 DATE_RE = re.compile(r"([A-Za-z]+\s+\d{1,2},\s+\d{4})")
 MODEL_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
@@ -531,12 +531,15 @@ def remote_compile(info: ReleaseInfo, source: Path, ip: str, workspace: Path, ke
   for filename in remote_files:
     run(scp_base(ip) + [f"comma@{ip}:{output_dir}/{filename}", str(artifact_dir / filename)])
 
-  parts = sorted(artifact_dir.glob(f"{artifact_prefix}.p[0-9][0-9]"))
+  parts = sorted(artifact_dir.glob(f"{artifact_prefix}.chunk[0-9][0-9]of[0-9][0-9]"))
   full_artifact = artifact_dir / artifact_prefix
+  chunk_manifest_path = artifact_dir / f"{artifact_prefix}.chunkmanifest"
   checksum_path = artifact_dir / f"{artifact_prefix}.sha256"
   if parts:
-    if full_artifact.exists() or not checksum_path.is_file():
-      raise ReleaseError("Device returned invalid multipart output")
+    if full_artifact.exists() or not checksum_path.is_file() or not chunk_manifest_path.is_file():
+      raise ReleaseError("Device returned invalid native chunk output")
+    if int(chunk_manifest_path.read_text(encoding="utf-8").strip()) != len(parts):
+      raise ReleaseError("Device chunk manifest does not match the returned chunks")
     expected = checksum_path.read_text(encoding="utf-8").split()[0].lower()
     digest = hashlib.sha256()
     size = 0
@@ -547,8 +550,8 @@ def remote_compile(info: ReleaseInfo, source: Path, ip: str, workspace: Path, ke
           size += len(chunk)
     actual = digest.hexdigest()
     if actual != expected:
-      raise ReleaseError(f"Multipart checksum mismatch: {actual} != {expected}")
-    artifact_files = [*parts, checksum_path]
+      raise ReleaseError(f"Native chunk checksum mismatch: {actual} != {expected}")
+    artifact_files = [chunk_manifest_path, *parts, checksum_path]
   elif full_artifact.is_file():
     size = full_artifact.stat().st_size
     actual = sha256_file(full_artifact)
@@ -564,7 +567,7 @@ def remote_compile(info: ReleaseInfo, source: Path, ip: str, workspace: Path, ke
     "status": "compiled",
     "size": size,
     "sha256": expected,
-    "multipart": bool(parts),
+    "chunk_count": len(parts),
     "files": [path.name for path in artifact_files],
     "path": str(artifact_dir),
   }
@@ -587,6 +590,7 @@ def manifest_entry(info: ReleaseInfo, result: dict) -> dict:
     "artifact_format": "tinygrad_single_v1",
     "artifact_size": result["size"],
     "artifact_sha256": result["sha256"],
+    "artifact_chunk_count": result["chunk_count"],
     "uses_external_gpu": info.uses_external_gpu,
   }
 
@@ -629,14 +633,15 @@ def hf_copy(source: Path, bucket: str, remote_path: str) -> None:
   run([hf, "buckets", "cp", str(source), destination, "--format", "quiet"])
 
 
-def upload_huggingface(info: ReleaseInfo, result: dict, workspace: Path, bucket: str, manifest: Path, upload_onnx: bool, source: Path) -> None:
+def upload_huggingface(info: ReleaseInfo, result: dict, workspace: Path, bucket: str, manifest_version: str,
+                       manifest: Path, upload_onnx: bool, source: Path) -> None:
   artifact_dir = Path(result["path"])
   for filename in result["files"]:
-    hf_copy(artifact_dir / filename, bucket, f"models/{info.model_id}/{filename}")
+    hf_copy(artifact_dir / filename, bucket, f"models/{manifest_version}/{info.model_id}/{filename}")
   if upload_onnx:
     hf_copy(source, bucket, f"onnx/{info.model_id}/{source.name}")
   hf_copy(manifest, bucket, f"manifests/{manifest.name}")
-  print(f"Hugging Face upload complete: {bucket}/models/{info.model_id}/")
+  print(f"Hugging Face upload complete: {bucket}/models/{manifest_version}/{info.model_id}/")
 
 
 def git_output(repo: Path, args: list[str]) -> str:
@@ -658,13 +663,16 @@ def check_resources_repo(repo: Path, branch: str) -> None:
     raise ReleaseError("Resources checkout has unpushed or missing remote commits; sync it before releasing")
 
 
-def push_github(info: ReleaseInfo, result: dict, resources_repo: Path, manifest: Path, branch: str, force: bool) -> None:
+def push_github(info: ReleaseInfo, result: dict, resources_repo: Path, manifest_version: str,
+                manifest: Path, branch: str, force: bool) -> None:
   artifact_dir = Path(result["path"])
   artifact_names = list(result["files"])
+  release_dir = resources_repo / manifest_version / info.model_id
+  release_dir.mkdir(parents=True, exist_ok=True)
   destination_paths = []
   stale_relative: list[str] = []
   for filename in artifact_names:
-    destination = resources_repo / filename
+    destination = release_dir / filename
     if destination.exists() and not force:
       raise ReleaseError(f"Artifact already exists in GitHub checkout: {destination}; use --force to replace it")
     shutil.copy2(artifact_dir / filename, destination)
@@ -673,7 +681,7 @@ def push_github(info: ReleaseInfo, result: dict, resources_repo: Path, manifest:
   prefix = f"{info.model_id}_driving_tinygrad.pkl"
   if force:
     allowed = {path.name for path in destination_paths}
-    for stale in resources_repo.glob(f"{prefix}*"):
+    for stale in release_dir.glob(f"{prefix}*"):
       if stale.name not in allowed and stale.is_file():
         stale.unlink()
         stale_relative.append(str(stale.relative_to(resources_repo)))
@@ -770,11 +778,12 @@ def main() -> int:
     resources_repo = args.resources_repo.expanduser().resolve()
     check_resources_repo(resources_repo, args.resources_branch)
     manifest = update_manifest(resources_repo, info, result, args.manifest_version)
-    upload_huggingface(info, result, workspace, args.hf_bucket, manifest, not args.no_onnx_upload, source)
-    push_github(info, result, resources_repo, manifest, args.resources_branch, args.force)
+    upload_huggingface(info, result, workspace, args.hf_bucket, args.manifest_version,
+                       manifest, not args.no_onnx_upload, source)
+    push_github(info, result, resources_repo, args.manifest_version, manifest, args.resources_branch, args.force)
     print("\nRelease complete.")
     print(f"  local artifact: {result['path']}")
-    print(f"  Hugging Face:  {args.hf_bucket}/models/{info.model_id}/")
+    print(f"  Hugging Face:  {args.hf_bucket}/models/{args.manifest_version}/{info.model_id}/")
     print(f"  GitHub:        {RESOURCES_REPO}/{args.resources_branch}")
     return 0
   except (ReleaseError, subprocess.CalledProcessError) as error:

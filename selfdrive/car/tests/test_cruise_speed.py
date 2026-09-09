@@ -313,6 +313,22 @@ class TestVCruiseHelper:
         assert V_CRUISE_MIN <= self.v_cruise_helper.v_cruise_kph <= V_CRUISE_MAX
         assert self.v_cruise_helper.v_cruise_initialized
 
+  def test_resume_keeps_previous_software_cruise_speed(self):
+    engage_cs = car.CarState(vEgo=75 * CV.MPH_TO_MS)
+    self.v_cruise_helper.initialize_v_cruise(engage_cs, experimental_mode=False, resume_prev_button=False,
+                                             starpilot_toggles=self.starpilot_toggles)
+
+    disabled_cs = car.CarState(cruiseState={"available": True})
+    self.v_cruise_helper.update_v_cruise(disabled_cs, enabled=False, is_metric=False,
+                                         speed_limit_changed=False, starpilot_toggles=self.starpilot_toggles)
+
+    resume_cs = car.CarState(vEgo=22 * CV.MPH_TO_MS)
+    self.v_cruise_helper.initialize_v_cruise(resume_cs, experimental_mode=False, resume_prev_button=True,
+                                             starpilot_toggles=self.starpilot_toggles)
+
+    assert self.v_cruise_helper.v_cruise_kph == pytest.approx(75 * CV.MPH_TO_KPH)
+    assert self.v_cruise_helper.v_cruise_cluster_kph == pytest.approx(75 * CV.MPH_TO_KPH)
+
   def test_initialize_v_cruise_matches_speed_limit(self):
     self.reset_cruise_speed_state()
     self.starpilot_toggles.set_speed_limit = True
@@ -481,6 +497,35 @@ class TestVCruiseHelper:
     )
 
     assert self.v_cruise_helper.v_cruise_kph == pytest.approx(initial_v_cruise_kph + IMPERIAL_INCREMENT)
+
+  @pytest.mark.parametrize("openpilot_longitudinal", [False, True])
+  def test_pcm_cruise_always_tracks_pcm_speed(self, openpilot_longitudinal):
+    CP = car.CarParams(pcmCruise=True, openpilotLongitudinalControl=openpilot_longitudinal)
+    helper = VCruiseHelper(CP)
+    toggles = SimpleNamespace(cruise_increase=5, cruise_increase_long=1, set_speed_limit=False)
+
+    helper.initialize_v_cruise(car.CarState(vEgo=40 * CV.KPH_TO_MS), False, False, toggles)
+    assert not helper.v_cruise_initialized
+
+    samples = (
+      (72.0, 71.0, None),
+      (25.0, 25.0, {"type": ButtonType.decelCruise, "pressed": True}),
+      (65.0, 65.0, {"type": ButtonType.decelCruise, "pressed": False}),
+      (90.0, 90.0, {"type": ButtonType.accelCruise, "pressed": True}),
+      (5.0, 5.0, {"type": ButtonType.accelCruise, "pressed": False}),
+    )
+    for pcm_speed_kph, pcm_cluster_speed_kph, button_event in samples:
+      cs = car.CarState(
+        cruiseState={
+          "available": True,
+          "speed": pcm_speed_kph * CV.KPH_TO_MS,
+          "speedCluster": pcm_cluster_speed_kph * CV.KPH_TO_MS,
+        },
+        buttonEvents=[] if button_event is None else [button_event],
+      )
+      helper.update_v_cruise(cs, True, True, False, toggles)
+      assert helper.v_cruise_kph == pytest.approx(pcm_speed_kph)
+      assert helper.v_cruise_cluster_kph == pytest.approx(pcm_cluster_speed_kph)
 
 
 class TestVCruiseHelperRedneck:

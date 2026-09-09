@@ -211,21 +211,17 @@ class TestVolvoSafetyBase(common.CarSafetyTest):
     self.assertTrue(self._tx(valid))
     self.assertFalse(self._tx(invalid))
 
-  def test_driver_override_disengages_controls(self):
+  def test_driver_input_is_a_normal_override(self):
     def driver_input_msg(value):
       return self.mid_packer.make_can_msg_safety(
         "DRIVER_INPUT", VOLVO_PARTY_BUS, {"STEERING_DRIVER_INPUT": value})
 
-    for value in (2, 3, 5):
+    for value in (2, 3, 5, 6, 20, -20):
       self._rx(driver_input_msg(0))
       self.safety.set_controls_allowed(True)
       self._rx(driver_input_msg(value))
-      self.assertTrue(self.safety.get_controls_allowed(), f"unexpected disengage at {value=}")
-
-    self._rx(driver_input_msg(0))
-    self.safety.set_controls_allowed(True)
-    self._rx(driver_input_msg(6))
-    self.assertFalse(self.safety.get_controls_allowed())
+      self.assertTrue(self.safety.get_controls_allowed(), f"unexpected safety disengage at {value=}")
+      self.assertFalse(self.safety.get_steering_disengage_prev())
 
   # ---- Volvo-specific consistency tests ----
 

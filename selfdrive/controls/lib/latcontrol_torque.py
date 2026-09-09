@@ -519,7 +519,9 @@ class LatControlTorque(LatControl):
           CS.vEgo, setpoint, prius_deadzone_max,
         )
       elif genesis_g70_active:
-        vehicle_friction_jerk_deadzone = get_genesis_g70_friction_jerk_deadzone(CS.vEgo, setpoint)
+        vehicle_friction_jerk_deadzone = get_genesis_g70_friction_jerk_deadzone(
+          CS.vEgo, setpoint, desired_lateral_jerk, measurement,
+        )
       elif self.is_genesis_gv70:
         vehicle_friction_jerk_deadzone = get_genesis_gv70_friction_jerk_deadzone(CS.vEgo, setpoint)
       elif kia_carnival_active:
@@ -637,6 +639,9 @@ class LatControlTorque(LatControl):
         output_torque *= tucson_4th_gen_center_taper
       elif genesis_g70_active:
         output_torque *= genesis_g70_center_output_taper
+        output_torque *= get_genesis_g70_high_speed_transition_scale(
+          setpoint, desired_lateral_jerk, CS.vEgo,
+        )
         output_torque *= get_genesis_g70_curve_unwind_output_scale(setpoint, desired_lateral_jerk, CS.vEgo)
         output_torque *= get_genesis_g70_high_speed_error_scale(
           setpoint, measurement, desired_lateral_jerk, CS.vEgo,
@@ -646,7 +651,13 @@ class LatControlTorque(LatControl):
         output_torque = float(np.clip(output_torque, -low_speed_output_limit, low_speed_output_limit))
       elif self.is_genesis_gv70:
         output_torque *= get_genesis_gv70_center_output_scale(setpoint, CS.vEgo)
+        output_torque *= get_genesis_gv70_low_speed_center_overshoot_scale(
+          setpoint, measurement, CS.vEgo,
+        )
         output_torque *= get_genesis_gv70_high_speed_error_scale(
+          setpoint, measurement, desired_lateral_jerk, CS.vEgo,
+        )
+        output_torque *= get_genesis_gv70_reversal_output_scale(
           setpoint, measurement, desired_lateral_jerk, CS.vEgo,
         )
       elif sonata_hybrid_active:

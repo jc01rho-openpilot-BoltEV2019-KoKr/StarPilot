@@ -342,6 +342,10 @@ ul { list-style: none; margin: 0; padding: 0; }
 .gx-appbar__back:active { transform: scale(0.92); }
 
 .gx-appbar__title {
+  background: linear-gradient(135deg, #8b6cc5 0%, #5ec8c8 55%, #d4789c 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
   font-size: var(--fs-lg);
   font-weight: var(--fw-bold);
   white-space: nowrap;
@@ -588,6 +592,66 @@ ul { list-style: none; margin: 0; padding: 0; }
   transition: transform var(--motion-fast), box-shadow var(--motion-fast);
 }
 
+.gx-unit-note {
+  align-items: center;
+  background: var(--primary-container);
+  border: 1px solid var(--primary);
+  border-radius: var(--radius-md);
+  color: var(--on-primary-container);
+  display: flex;
+  font-size: var(--fs-sm);
+  gap: var(--sp-2);
+  margin: 0 0 var(--sp-4);
+  padding: var(--sp-3) var(--sp-4);
+}
+
+.gx-unit-note i {
+  color: var(--primary);
+  font-size: 1.2rem;
+}
+
+.gx-row.gx-diagnostic-row--changed {
+  background: rgba(139, 108, 197, 0.18) !important;
+  box-shadow: inset 3px 0 var(--primary);
+}
+
+.gx-update-progress {
+  display: grid;
+  gap: 6px;
+  margin-top: var(--sp-2);
+}
+
+.gx-update-progress__track {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-full);
+  height: 12px;
+  overflow: hidden;
+}
+
+.gx-update-progress__fill {
+  background: linear-gradient(90deg, #5ec8c8 0%, #8b6cc5 100%);
+  border-radius: inherit;
+  height: 100%;
+  transition: width 0.4s ease;
+}
+
+.gx-update-progress__fill--error {
+  background: linear-gradient(90deg, #b43a3a 0%, #de5656 100%);
+}
+
+.gx-update-progress__meta {
+  align-items: center;
+  display: flex;
+  font-size: var(--fs-sm);
+  gap: var(--sp-2);
+  justify-content: space-between;
+}
+
+.gx-update-progress small {
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
 [data-theme="light"] .gx-card {
   border: 1px solid rgba(120, 73, 232, 0.22);
 }
@@ -745,6 +809,13 @@ ul { list-style: none; margin: 0; padding: 0; }
 .gx-slider-row .gx-row__value { text-align: left; min-width: 0; }
 .gx-slider-row .gx-slider-reset { align-self: flex-end; }
 
+.gx-slider-meta {
+  color: var(--text-muted);
+  display: flex;
+  font-size: var(--fs-xs);
+  justify-content: space-between;
+}
+
 input[type="range"].gx-slider {
   -webkit-appearance: none;
   appearance: none;
@@ -899,11 +970,80 @@ input[type="color"].gx-color {
 .gx-btn--tonal:hover { background: rgba(157, 114, 255, 0.28); }
 .gx-btn--block { width: 100%; }
 
+.gx-btn--danger { background: var(--error); color: var(--on-error); box-shadow: 0 4px 12px rgba(255, 82, 119, 0.3); }
+.gx-btn--danger:hover { background: #ff6b8b; }
+[data-theme="light"] .gx-btn--danger:hover { background: #e04b6f; }
+
+.gx-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: var(--sp-4);
+}
+
+.gx-tab {
+  align-items: center;
+  background: var(--surface-container);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-full);
+  color: var(--on-surface-variant);
+  cursor: pointer;
+  display: inline-flex;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  gap: 6px;
+  justify-content: center;
+  min-height: 40px;
+  padding: 0 var(--sp-4);
+  transition: background-color var(--motion-fast), color var(--motion-fast), border-color var(--motion-fast);
+}
+
+.gx-tab:hover { background: var(--glass-bg-hover); color: var(--on-surface); }
+.gx-tab:active { transform: scale(0.97); }
+
+[data-theme="light"] .gx-tab { border: 1.5px solid rgba(120, 73, 232, 0.3); }
+
+.gx-tab.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  box-shadow: 0 4px 12px var(--primary-glow);
+  color: var(--on-primary);
+  font-weight: var(--fw-bold);
+}
+
+.gx-note {
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  margin: var(--sp-2) 0;
+}
+
+.gx-note strong { color: var(--on-surface); font-weight: var(--fw-bold); }
+
+.gx-note--danger { color: var(--error); }
+.gx-note--danger strong { color: var(--error); }
+
 .gx-grid {
   display: grid;
   gap: var(--sp-3);
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
 }
+
+.gx-card-grid {
+  display: grid;
+  gap: var(--sp-3);
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+}
+
+.gx-card-grid .gx-card { margin-bottom: 0; }
+
+.gx-tight-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.gx-tight-grid .gx-row { border-radius: var(--radius-md); }
 
 .gx-tile {
   align-items: center;
@@ -961,6 +1101,23 @@ input[type="color"].gx-color {
   color: var(--error);
 }
 
+.gx-chip-x {
+  align-items: center;
+  background: transparent;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  line-height: 1;
+  margin: 0;
+  padding: 0 0 0 2px;
+}
+
+.gx-chip-x:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
 .gx-alert {
   align-items: center;
   backdrop-filter: var(--glass-blur);
@@ -984,6 +1141,14 @@ input[type="color"].gx-color {
   background: rgba(255, 184, 101, 0.12);
   border-left-color: var(--warning);
 }
+
+.gx-alert--danger {
+  background: rgba(255, 82, 119, 0.12);
+  border-left-color: var(--error);
+}
+
+.gx-alert--danger .gx-alert__icon { color: var(--error); }
+.gx-alert--danger .gx-alert__body span { color: var(--error); }
 
 .gx-alert__icon { font-size: 1.4rem; color: var(--primary); }
 .gx-alert__body { flex: 1 1 220px; }
@@ -1129,6 +1294,20 @@ input[type="color"].gx-color {
   gap: var(--sp-2);
   justify-content: flex-end;
   margin-top: var(--sp-5);
+}
+
+/* Native-style bottom sheet used for fullscreen player overlays. Kept as a
+   sibling of gx-sheet so confirm dialogs keep their centered look. */
+.gx-scrim--bottomsheet {
+  align-items: flex-end;
+  padding: var(--sp-4) 0 calc(var(--bottomnav-height) + var(--sp-3));
+}
+
+.gx-scrim--bottomsheet .gx-sheet {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+  max-height: min(86dvh, 760px);
+  max-width: 720px;
 }
 
 .gx-tree-node { position: relative; }
@@ -1292,6 +1471,84 @@ input[type="color"].gx-color {
   transition: max-height var(--motion-base), opacity var(--motion-base);
 }
 .gx-collapse-enter-from, .gx-collapse-leave-to { max-height: 0; opacity: 0; }
+
+/* ---- PWA install guidance (Galaxy page) ---- */
+
+.gx-install__body {
+  display: grid;
+  gap: var(--sp-3);
+  padding: var(--sp-4);
+}
+
+.gx-install__lead {
+  color: var(--on-surface-variant);
+  line-height: 1.55;
+  margin: 0;
+}
+
+.gx-install__lead strong { color: var(--on-surface); }
+
+.gx-install__benefits {
+  display: grid;
+  gap: 10px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.gx-install__benefits li {
+  align-items: center;
+  color: var(--on-surface-variant);
+  display: flex;
+  font-size: var(--fs-sm);
+  gap: var(--sp-3);
+  line-height: 1.4;
+}
+
+.gx-install__benefits i {
+  color: var(--primary);
+  flex: 0 0 auto;
+  font-size: 1.15rem;
+  text-align: center;
+  width: 22px;
+}
+
+.gx-install__hint {
+  align-items: flex-start;
+  background: var(--surface-container);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  display: flex;
+  font-size: var(--fs-sm);
+  gap: var(--sp-2);
+  line-height: 1.5;
+  margin: 0;
+  padding: var(--sp-3);
+}
+
+.gx-install__hint i {
+  color: var(--primary);
+  flex: 0 0 auto;
+  font-size: 1rem;
+  margin-top: 1px;
+}
+
+.gx-install__steps {
+  color: var(--text-muted);
+  display: grid;
+  font-size: var(--fs-sm);
+  gap: var(--sp-2);
+  line-height: 1.5;
+  margin: var(--sp-2) 0 0;
+  padding-left: var(--sp-5);
+}
+
+.gx-install__actions {
+  border-top: 1px solid var(--outline);
+  padding-top: var(--sp-3);
+}
+
+.gx-install__manual { display: grid; gap: var(--sp-2); }
 
 @media (max-width: 767px) {
   .liquid-glass-nav { display: flex; }
