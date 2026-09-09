@@ -16,7 +16,12 @@ from openpilot.system.sentry import capture_flm_tune_submission, capture_report
 from openpilot.system.athena.registration import UNREGISTERED_DONGLE_ID
 from openpilot.system.hardware.hw import Paths
 
-from openpilot.starpilot.assets.model_manager import MODEL_DOWNLOAD_ALL_PARAM, MODEL_DOWNLOAD_PARAM, ModelManager
+from openpilot.starpilot.assets.model_manager import (
+  MODEL_DOWNLOAD_ALL_PARAM,
+  MODEL_DOWNLOAD_PARAM,
+  MODEL_LAB_DOWNLOAD_PARAM,
+  ModelManager,
+)
 from openpilot.starpilot.assets.theme_manager import THEME_COMPONENT_PARAMS, ThemeManager
 from openpilot.starpilot.common.starpilot_functions import update_maps, update_openpilot
 from openpilot.starpilot.common.safe_mode import (
@@ -105,6 +110,12 @@ def check_assets(now, model_manager, theme_manager, thread_manager, params, para
       model_to_download = model_to_download.decode("utf-8", errors="replace")
     if model_to_download:
       thread_manager.run_with_lock(model_manager.download_model, (model_to_download,))
+    else:
+      lab_model_to_download = params_memory.get(MODEL_LAB_DOWNLOAD_PARAM)
+      if isinstance(lab_model_to_download, bytes):
+        lab_model_to_download = lab_model_to_download.decode("utf-8", errors="replace")
+      if lab_model_to_download:
+        thread_manager.run_with_lock(model_manager.download_model_accelerator, (lab_model_to_download,))
 
   for asset_type, asset_param in THEME_COMPONENT_PARAMS.items():
     asset_to_download = params_memory.get(asset_param)

@@ -7,25 +7,25 @@ const NAV = {
     { name: "Recordings", link: "/recordings", icon: "bi-camera-reels" },
   ],
   tools: [
-    { name: "Logs & Diagnostics", link: "/logs", icon: "bi-exclamation-triangle" },
-    { name: "Tuning & Maneuvers", link: "/tuning", icon: "bi-sign-turn-right" },
-    { name: "Navigation & Maps", link: "/navigation", icon: "bi-map" },
-    { name: "Vehicle Controls", link: "/vehicle", icon: "bi-car-front" },
-    { name: "V-ASM Spot Monitor", link: "/manage_v_asm", icon: "bi-bounding-box" },
-    { name: "PiP Side Camera", link: "/manage_pip_sidecam", icon: "bi-camera-video" },
-    { name: "System Tools", link: "/system", icon: "bi-arrow-repeat" },
+    { name: "Bluetooth", link: "/bluetooth", icon: "bi-bluetooth" },
+    { name: "Cameras & Monitoring", link: "/cameras", icon: "bi-camera-video" },
     { name: "Galaxy", link: "/galaxy", icon: "bi-globe2" },
-    { name: "Sentry Mode", link: "/sentry", icon: "bi-shield-exclamation" },
+    { name: "Logs & Diagnostics", link: "/logs", icon: "bi-exclamation-triangle" },
     { name: "Model Manager", link: "/manage_models", icon: "bi-cpu" },
+    { name: "Navigation & Maps", link: "/navigation", icon: "bi-map" },
+    { name: "System Tools", link: "/system", icon: "bi-arrow-repeat" },
+    { name: "Model Laboratory", link: "/model_laboratory", icon: "bi-bezier2" },
     { name: "Plots", link: "/plots", icon: "bi-graph-up-arrow" },
     { name: "Testing Ground", link: "/testing_ground", icon: "bi-bezier2" },
     { name: "Theme Maker", link: "/theme_maker", icon: "bi-palette-fill" },
+    { name: "Tuning, Plots & Testing", link: "/tuning", icon: "bi-sign-turn-right" },
+    { name: "Vehicle Controls", link: "/vehicle", icon: "bi-car-front" },
   ],
 }
 
 const BOTTOM_NAV = [
   { name: "Home", link: "/", icon: "bi-house-fill" },
-  { name: "Settings", link: "/settings", icon: "bi-toggle-on" },
+  { name: "Toggles", link: "/settings", icon: "bi-toggle-on" },
   { name: "Tools", link: "/tools", icon: "bi-tools" },
   { name: "Recordings", link: "/recordings", icon: "bi-camera-reels" },
 ]
@@ -104,8 +104,8 @@ export const AppShell = {
           </button>
           <span class="gx-appbar__title">Galaxy</span>
           <div class="gx-searchwrap">
-            <input ref="searchInput" class="gx-search gx-appbar__search" type="search" placeholder="Search settings..."
-              v-model="search" aria-label="Search settings" />
+            <input ref="searchInput" class="gx-search gx-appbar__search" type="search" placeholder="Search toggles..."
+              v-model="search" aria-label="Search toggles" />
             <button v-if="search" type="button" class="gx-search-clear" aria-label="Clear search" @click="clearSearch">
               <i class="bi bi-x"></i>
             </button>

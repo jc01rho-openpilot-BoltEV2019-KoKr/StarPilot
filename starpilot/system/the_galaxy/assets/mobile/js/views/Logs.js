@@ -1,7 +1,14 @@
 import { api, showSnackbar } from "../api.js"
-import { useLogStream } from "../composables.js"
+import { useLogStream, useTabRouting } from "../composables.js"
 import { GalaxyConfirm } from "../components/GalaxyModal.js"
-import { GalaxyEmbed } from "../components/GalaxyEmbed.js"
+import { TroubleshootPanel } from "../components/TroubleshootPanel.js"
+import { GalaxyTabs } from "../components/GalaxyTabs.js"
+
+const TABS = {
+  troubleshoot: "Troubleshoot",
+  errors: "Error Logs",
+  tmux: "Tmux Live Log",
+}
 
 function parseLogDate(filename) {
   const m = filename.match(/(\d{4})-(\d{2})-(\d{2})[T_]?(\d{2})-?(\d{2})-?(\d{2})?/)
@@ -12,10 +19,10 @@ function parseLogDate(filename) {
 
 export const Logs = {
   name: "Logs",
-  components: { GalaxyEmbed },
+  components: { TroubleshootPanel, GalaxyTabs },
   data() {
     return {
-      tab: "errors",
+      TABS,
       errorFiles: [],
       errorsLoading: true,
       selectedLog: "",
@@ -23,11 +30,12 @@ export const Logs = {
       logLoading: false,
       tmuxFiles: [],
       tmuxLoading: true,
-      troubleshootData: null,
-      troubleshootRunning: false,
       searchFilter: "",
       tmuxAutoScroll: true,
     }
+  },
+  setup() {
+    return useTabRouting("/logs", { troubleshoot: "troubleshoot", errors: "errors", tmux: "tmux" })
   },
   created() {
     this.stream = useLogStream({ endpoint: "/api/tmux_log/live", snapshotFn: () => api.tmuxSnapshot(), interval: 2000 })
@@ -45,7 +53,6 @@ export const Logs = {
     this.loadErrorLogs()
     this.loadTmuxLogs()
     this.stream.start()
-    this.loadTroubleshoot()
   },
   beforeUnmount() { this.stream.destroy() },
   computed: {
@@ -140,26 +147,6 @@ export const Logs = {
       showSnackbar(ok ? "All logs deleted!" : "Delete failed.", ok ? "info" : "error")
       this.tmuxFiles = []
     },
-    async loadTroubleshoot() {
-      try {
-        this.troubleshootData = await api.getTroubleshoot()
-      } catch (e) { this.troubleshootData = null }
-    },
-    async runTroubleshoot() {
-      this.troubleshootRunning = true
-      try {
-        this.troubleshootData = await api.runTroubleshoot()
-      } catch (e) {
-        showSnackbar("Troubleshoot failed.", "error")
-      } finally {
-        this.troubleshootRunning = false
-      }
-    },
-    async resetTroubleshoot() {
-      const ok = await api.resetTroubleshoot()
-      if (ok) this.troubleshootData = null
-      showSnackbar(ok ? "Troubleshoot reset!" : "Reset failed.", ok ? "info" : "error")
-    },
     onTmuxScroll(e) {
       const el = e.target
       this.tmuxAutoScroll = el.scrollHeight - el.scrollTop - el.clientHeight < 40
@@ -169,16 +156,12 @@ export const Logs = {
     <div class="gx-view">
       <h2 style="margin-top:0;">Logs & Diagnostics</h2>
 
-      <div class="gx-tabs" style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap;">
-        <button type="button" class="gx-chip" :style="tab==='errors'?'background:var(--primary);color:var(--on-primary);':''" @click="tab='errors'">Error Logs</button>
-        <button type="button" class="gx-chip" :style="tab==='tmux'?'background:var(--primary);color:var(--on-primary);':''" @click="tab='tmux'">Tmux Live Log</button>
-        <button type="button" class="gx-chip" :style="tab==='troubleshoot'?'background:var(--primary);color:var(--on-primary);':''" @click="tab='troubleshoot'">Troubleshoot</button>
-      </div>
+      <GalaxyTabs :items="TABS" :active="tab" @select="selectTab" />
 
       <template v-if="tab === 'errors'">
         <div style="display:flex; gap:8px; margin-bottom:8px; align-items:center;">
           <input class="gx-field" style="flex:1;" type="search" v-model="searchFilter" placeholder="Search logs..." />
-          <button v-if="errorFiles.length" type="button" class="gx-btn" style="background:var(--error);color:var(--on-error);" @click="deleteAllLogs()">Delete All</button>
+          <button v-if="errorFiles.length" type="button" class="gx-btn gx-btn--danger" @click="deleteAllLogs()">Delete All</button>
         </div>
         <section class="gx-card">
           <div v-if="errorsLoading" class="gx-loading">Loading...</div>
@@ -190,7 +173,7 @@ export const Logs = {
             </div>
             <div style="display:flex; gap:6px;">
               <a class="gx-btn gx-btn--tonal" :href="'/api/error_logs/' + encodeURIComponent(f.filename)" download><i class="bi bi-download"></i></a>
-              <button type="button" class="gx-btn" style="background:var(--error);color:var(--on-error);" @click.stop="deleteLog(f)"><i class="bi bi-trash"></i></button>
+              <button type="button" class="gx-btn gx-btn--danger" @click.stop="deleteLog(f)"><i class="bi bi-trash"></i></button>
             </div>
           </div>
         </section>
@@ -213,7 +196,7 @@ export const Logs = {
           </div>
           <pre ref="tmuxtail" class="gx-terminal" @scroll.passive="onTmuxScroll">{{ stream.state.log || '(waiting for log output…)' }}</pre>
           <div style="display:flex; gap:8px; padding: var(--sp-3); flex-wrap:wrap;">
-            <button type="button" class="gx-btn gx-btn--tonal" @click="stream.togglePause()">{{ stream.state.paused ? '▶️ Resume' : '⏸️ Pause' }}</button>
+            <button type="button" class="gx-btn gx-btn--tonal" @click="stream.togglePause()"><i class="bi" :class="stream.state.paused ? 'bi-play-fill' : 'bi-pause-fill'"></i> {{ stream.state.paused ? 'Resume' : 'Pause' }}</button>
             <button type="button" class="gx-btn gx-btn--tonal" @click="captureTmux">Capture Log</button>
             <button type="button" class="gx-btn gx-btn--tonal" @click="deleteAllTmux">Delete All</button>
           </div>
@@ -232,14 +215,14 @@ export const Logs = {
             </div>
             <div style="display:flex; gap:6px;">
               <a class="gx-btn gx-btn--tonal" :href="'/api/tmux_log/download/' + encodeURIComponent(f.filename)" download><i class="bi bi-download"></i></a>
-              <button type="button" class="gx-btn" style="background:var(--error);color:var(--on-error);" @click="deleteTmux(f)"><i class="bi bi-trash"></i></button>
+              <button type="button" class="gx-btn gx-btn--danger" @click="deleteTmux(f)"><i class="bi bi-trash"></i></button>
             </div>
           </div>
         </section>
       </template>
 
       <template v-else>
-        <GalaxyEmbed src="/troubleshoot" title="Troubleshoot" />
+        <TroubleshootPanel />
       </template>
     </div>
   `,

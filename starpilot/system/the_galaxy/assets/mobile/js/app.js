@@ -8,8 +8,18 @@ import { Logs } from "./views/Logs.js"
 import { Tuning } from "./views/Tuning.js"
 import { Navigation } from "./views/Navigation.js"
 import { Vehicle } from "./views/Vehicle.js"
+import { Bluetooth } from "./views/Bluetooth.js"
 import { SystemTools } from "./views/SystemTools.js"
 import { ToolEmbed } from "./views/ToolEmbed.js"
+import { Doors } from "./views/Doors.js"
+import { Galaxy } from "./views/Galaxy.js"
+import { Tsk } from "./views/Tsk.js"
+import { ModelManager } from "./views/ModelManager.js"
+import { Plots } from "./views/Plots.js"
+import { TestingGround } from "./views/TestingGround.js"
+import { ThemeMaker } from "./views/ThemeMaker.js"
+import { ModelLaboratory } from "./views/ModelLaboratory.js"
+import { Cameras } from "./views/Cameras.js"
 import { store, initRouter, navigate } from "./store.js"
 import { showSnackbar } from "./api.js"
 
@@ -33,8 +43,19 @@ const VIEWS = {
   "/tuning": Tuning,
   "/navigation": Navigation,
   "/vehicle": Vehicle,
+  "/bluetooth": Bluetooth,
   "/system": SystemTools,
   "/embed": ToolEmbed,
+  "/manage_doors": Doors,
+  "/galaxy": Galaxy,
+  "/manage_tsk": Tsk,
+  "/sentry": Cameras,
+  "/manage_models": ModelManager,
+  "/plots": Plots,
+  "/testing_ground": TestingGround,
+  "/theme_maker": ThemeMaker,
+  "/model_laboratory": ModelLaboratory,
+  "/cameras": Cameras,
 }
 
 function resolveView(path) {

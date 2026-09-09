@@ -46,7 +46,7 @@ MODEL_CONTEXT_FREQ = 5
 # GitHub/GitLab advertise a 100 MB per-file limit. Use the decimal limit so
 # artifacts such as a 104.4 MB PKL are split before they reach the remote.
 REPOSITORY_FILE_LIMIT = 100_000_000
-DEFAULT_MULTIPART_SIZE = 95 * 1024 * 1024
+DEFAULT_CHUNK_SIZE = 45 * 1024 * 1024
 USBGPU_PROBE_ATTEMPTS = 10
 DEFAULT_SUPERCOMBO_BEHAVIOR_VERSION = "v16"
 
@@ -69,10 +69,6 @@ def build_compile_env(*, supercombo: bool = False) -> dict[str, str]:
       int(str(env.get(key)), 0)
     except (TypeError, ValueError):
       env[key] = default
-  if supercombo:
-    # Unified supercombo artifacts must use upstream compile defaults. The
-    # legacy QCOM tuning causes a reproducible HCQ timeline failure here.
-    env.pop("QCOM_PRIORITY", None)
   return env
 
 
@@ -117,7 +113,7 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--gpu", "--external-gpu", dest="external_gpu", action="store_true",
                       help="Compile the driving artifact for the USB AMD GPU.")
   parser.add_argument("--split-artifact", type=Path, help="Split an existing oversized PKL without compiling.")
-  parser.add_argument("--chunk-size-mib", type=int, default=95, help="Multipart size in MiB; must be below 100.")
+  parser.add_argument("--chunk-size-mib", type=int, default=45, help="Native chunk size in MiB; must be below 100.")
   parser.add_argument("--no-split", action="store_true",
                       help="Keep a single .pkl even if >100 MiB (for local installs, which need one "
                            "file). Auto-enabled for local- model IDs.")
@@ -399,6 +395,15 @@ def multipart_output_paths(artifact: Path, output_dir: Path | None = None) -> li
   ]
 
 
+def chunked_output_paths(artifact: Path, output_dir: Path | None = None) -> list[Path]:
+  output_dir = output_dir or artifact.parent
+  return [
+    *sorted(output_dir.glob(f"{artifact.name}.chunk[0-9][0-9]of[0-9][0-9]")),
+    output_dir / f"{artifact.name}.chunkmanifest",
+    output_dir / f"{artifact.name}.sha256",
+  ]
+
+
 def _update_local_artifact_metadata(model_key: str, external_gpu: bool) -> None:
   metadata_path = MODELS_PATH / ".model_artifacts.json"
   try:
@@ -461,7 +466,7 @@ def install_local_artifact(artifact: Path, model_key: str, version: str, externa
 def split_oversized_artifact(
   artifact: Path,
   output_dir: Path | None = None,
-  chunk_size: int = DEFAULT_MULTIPART_SIZE,
+  chunk_size: int = DEFAULT_CHUNK_SIZE,
   force: bool = False,
 ) -> list[Path]:
   artifact = artifact.resolve()
@@ -469,46 +474,52 @@ def split_oversized_artifact(
   if not artifact.is_file():
     raise FileNotFoundError(artifact)
   if chunk_size <= 0 or chunk_size >= REPOSITORY_FILE_LIMIT:
-    raise ValueError("Multipart chunk size must be between 1 byte and 100 MiB.")
+    raise ValueError("Chunk size must be between 1 byte and 100 MiB.")
 
-  remove_paths(multipart_output_paths(artifact, output_dir))
+  remove_paths([*multipart_output_paths(artifact, output_dir), *chunked_output_paths(artifact, output_dir)])
   if artifact.stat().st_size <= REPOSITORY_FILE_LIMIT and not force:
     return []
 
   output_dir.mkdir(parents=True, exist_ok=True)
   digest = hashlib.sha256()
-  part_paths: list[Path] = []
+  chunk_paths: list[Path] = []
+  artifact_size = artifact.stat().st_size
+  chunk_count = (artifact_size + chunk_size - 1) // chunk_size
+  if chunk_count > 99:
+    raise ValueError(f"Artifact requires {chunk_count} chunks; two-digit chunk names support at most 99.")
   with open(artifact, "rb") as source:
-    for index in range(100):
-      part_path = output_dir / f"{artifact.name}.p{index:02d}"
-      part_size = 0
-      with open(part_path, "wb") as part_file:
-        while part_size < chunk_size:
-          chunk = source.read(min(1024 * 1024, chunk_size - part_size))
+    for index in range(chunk_count):
+      chunk_path = output_dir / f"{artifact.name}.chunk{index + 1:02d}of{chunk_count:02d}"
+      written = 0
+      with open(chunk_path, "wb") as chunk_file:
+        while written < chunk_size:
+          chunk = source.read(min(1024 * 1024, chunk_size - written))
           if not chunk:
             break
-          part_file.write(chunk)
+          chunk_file.write(chunk)
           digest.update(chunk)
-          part_size += len(chunk)
-      if part_size == 0:
-        part_path.unlink()
-        break
-      part_paths.append(part_path)
-  if not part_paths:
+          written += len(chunk)
+      if written == 0:
+        chunk_path.unlink()
+        raise RuntimeError("Unexpected end of artifact while chunking.")
+      chunk_paths.append(chunk_path)
+  if not chunk_paths:
     raise ValueError(f"Artifact is empty: {artifact}")
 
+  manifest_path = output_dir / f"{artifact.name}.chunkmanifest"
+  manifest_path.write_text(str(chunk_count))
   checksum_path = output_dir / f"{artifact.name}.sha256"
   checksum_path.write_text(f"{digest.hexdigest()}  {artifact.name}\n")
 
   verify_digest = hashlib.sha256()
-  for part_path in part_paths:
-    with open(part_path, "rb") as part_file:
-      for chunk in iter(lambda: part_file.read(1024 * 1024), b""):
+  for chunk_path in chunk_paths:
+    with open(chunk_path, "rb") as chunk_file:
+      for chunk in iter(lambda: chunk_file.read(1024 * 1024), b""):
         verify_digest.update(chunk)
   if verify_digest.hexdigest() != digest.hexdigest():
-    remove_paths([*part_paths, checksum_path])
-    raise RuntimeError("Split artifact failed checksum verification.")
-  return [*part_paths, checksum_path]
+    remove_paths([*chunk_paths, manifest_path, checksum_path])
+    raise RuntimeError("Chunked artifact failed checksum verification.")
+  return [manifest_path, *chunk_paths, checksum_path]
 
 
 def compile_driving(
@@ -528,6 +539,7 @@ def compile_driving(
   removed = remove_paths(sorted({
     output_path,
     *multipart_output_paths(output_path, output_dir),
+    *chunked_output_paths(output_path, output_dir),
     *output_dir.glob(f"{model_key}_driving_*_tinygrad.pkl"),
     *output_dir.glob(f"{model_key}_driving_*_tinygrad.pkl.p[0-9][0-9]"),
     *output_dir.glob(f"{model_key}_driving_*_tinygrad.pkl.sha256"),
@@ -552,6 +564,7 @@ def compile_driving(
     str(frame_skip),
     "--image-history-pipeline",
     image_history_pipeline,
+    "--out-of-band",
     *source_args,
   ]
   if version:
@@ -572,7 +585,6 @@ def compile_driving(
       "GMMU": "0",
       "TC_OPT": "2",
     })
-    command.append("--out-of-band")
     wait_for_external_gpu()
     command = external_gpu_compile_command(command)
   subprocess.run(command, cwd=REPO_ROOT, env=compile_env, check=True)
@@ -695,13 +707,12 @@ def main() -> int:
     if is_local and not args.no_install:
       install_local_artifact(output, model_key, version, args.external_gpu)
   else:
-    multipart_outputs = split_oversized_artifact(output)
-    if multipart_outputs:
-      print("  artifact exceeds 100 MB; created repository-safe multipart files:")
-      for multipart_output in multipart_outputs:
-        print(f"    {multipart_output.name} ({multipart_output.stat().st_size} bytes)")
-      output.unlink()
-      print(f"  removed oversized source artifact {output.name}")
+    chunked_outputs = split_oversized_artifact(output, force=True)
+    print("  created repository-safe native chunks:")
+    for chunked_output in chunked_outputs:
+      print(f"    {chunked_output.name} ({chunked_output.stat().st_size} bytes)")
+    output.unlink()
+    print(f"  removed source artifact {output.name}")
   print("Done.")
   return 0
 

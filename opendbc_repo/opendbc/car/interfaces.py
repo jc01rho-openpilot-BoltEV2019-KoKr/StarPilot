@@ -22,7 +22,7 @@ from opendbc.car.honda.values import CAR as HONDA, HONDA_BOSCH, HondaFlags, Hond
 from opendbc.car.hyundai.hyundaicanfd import CanBus
 from opendbc.car.hyundai.values import CAR as HYUNDAI, CANFD_CAR, HyundaiFlags, HyundaiStarPilotFlags, HyundaiStarPilotSafetyFlags, ALT_BUS_LDA_BUTTON_CARS
 from opendbc.car.mock.values import CAR as MOCK
-from opendbc.car.subaru.values import CAR as SUBARU, SubaruSafetyFlags
+from opendbc.car.subaru.values import CAR as SUBARU, SUBARU_REDNECK_CRUISE_CARS, SubaruSafetyFlags
 from opendbc.car.toyota.values import CAR as TOYOTA, NO_DSU_CAR, TSS2_CAR, UNSUPPORTED_DSU_CAR, ToyotaStarPilotFlags, ToyotaSafetyFlags
 from opendbc.car.values import PLATFORMS
 from opendbc.can import CANParser
@@ -242,7 +242,7 @@ class CarInterfaceBase(ABC):
           if 0x1FA in fingerprint[CAN.ECAN]:
             fp_ret.flags |= HyundaiStarPilotFlags.SPEED_LIMIT_AVAILABLE.value
 
-        if not (CP.flags & HyundaiFlags.CANFD) and 0x53E in fingerprint[2]:
+        if candidate != HYUNDAI.KIA_RAY_EV and not (CP.flags & HyundaiFlags.CANFD) and 0x53E in fingerprint[2]:
           fp_ret.flags |= HyundaiStarPilotFlags.HAS_LKAS12.value
 
         fp_ret.redneckCruiseAvailable = bool(CP.flags & HyundaiFlags.NON_SCC) and not bool(CP.flags & HyundaiFlags.CANFD_ALT_BUTTONS)
@@ -301,6 +301,14 @@ class CarInterfaceBase(ABC):
       elif platform in SUBARU:
         if getattr(starpilot_toggles, "subaru_sng", False):
           fp_ret.safetyConfigs[-1].safetyParam |= SubaruSafetyFlags.STOP_AND_GO.value
+
+        fp_ret.redneckCruiseAvailable = candidate in SUBARU_REDNECK_CRUISE_CARS
+        if fp_ret.redneckCruiseAvailable and params.get_bool("SubaruRedneckCruise") and \
+            not CP.openpilotLongitudinalControl:
+          fp_ret.pcmCruiseSpeed = False
+          CP.openpilotLongitudinalControl = True
+          CP.safetyConfigs[-1].safetyParam |= SubaruSafetyFlags.REDNECK_CRUISE.value
+          fp_ret.safetyConfigs[-1].safetyParam |= SubaruSafetyFlags.REDNECK_CRUISE.value
 
     return fp_ret
 

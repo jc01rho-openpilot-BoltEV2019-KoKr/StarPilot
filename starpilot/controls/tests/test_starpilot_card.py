@@ -366,6 +366,22 @@ def test_controller_actions_match_vehicle_button_behaviors(monkeypatch, tmp_path
   assert ret.alwaysOnLateralAllowed is True
 
 
+def test_controller_aol_does_not_require_physical_lkas_button_mapping(monkeypatch, tmp_path):
+  monkeypatch.setattr(spc, "Params", FakeParams)
+  monkeypatch.setattr(spc, "ERROR_LOGS_PATH", tmp_path)
+
+  card = spc.StarPilotCard(SimpleNamespace(brand="honda"), SimpleNamespace(alternativeExperience=0))
+  card.params_memory.put_int(spc.CONTROLLER_ACTION_COUNTERS[spc.CONTROLLER_ACTION_TOGGLE_AOL], 1)
+  ret = card.update(
+    make_car_state(),
+    SimpleNamespace(distancePressed=False),
+    make_sm(),
+    make_toggles(always_on_lateral=True, lkas_allowed_for_aol=False),
+  )
+
+  assert ret.alwaysOnLateralAllowed is True
+
+
 def test_hyundai_lkas_button_can_start_aol_before_normal_engagement(monkeypatch, tmp_path):
   monkeypatch.setattr(spc, "Params", FakeParams)
   monkeypatch.setattr(spc, "ERROR_LOGS_PATH", tmp_path)

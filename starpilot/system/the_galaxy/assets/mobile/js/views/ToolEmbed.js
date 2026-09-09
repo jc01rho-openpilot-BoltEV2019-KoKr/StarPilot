@@ -9,6 +9,7 @@ export const ToolEmbed = {
     title() {
       const map = {
         "/manage_models": "Model Manager",
+        "/model_laboratory": "Model Laboratory",
         "/galaxy": "Galaxy",
         "/sentry": "Sentry Mode",
         "/plots": "Live Plots",
@@ -23,8 +24,6 @@ export const ToolEmbed = {
         "/bluetooth": "Bluetooth",
         "/wheel-controls": "Controllers",
         "/vehicle_features": "Vehicle Features",
-        "/manage_v_asm": "V-Adj Spot Monitor",
-        "/manage_pip_sidecam": "PiP Side Camera",
         "/manage_doors": "Lock/Unlock Doors",
         "/manage_tsk": "Toyota Security Keys",
         "/set_navigation_destination": "Navigation Destination",

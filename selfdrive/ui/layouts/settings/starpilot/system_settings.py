@@ -57,7 +57,9 @@ from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
   TOGGLE_MIN_HEIGHT,
   TOGGLE_ROW_HEIGHT,
 )
+from openpilot.starpilot.common import param_profiles
 from openpilot.starpilot.common.connect_server import prepare_konik_server_switch
+from openpilot.starpilot.common.starpilot_variables import EXCLUDED_KEYS as STARPILOT_EXCLUDED_KEYS, TOGGLE_BACKUPS, update_starpilot_toggles
 
 LEGACY_STARPILOT_PARAM_RENAMES = {
   "FrogPilotApiToken": "StarPilotApiToken",
@@ -619,7 +621,7 @@ class AetherBackupsCareDialog(Widget):
 
     self._buttons = [
       {"id": "system_backups", "text": tr("System Backups"), "danger": False},
-      {"id": "toggle_snapshots", "text": tr("Toggle Snapshots"), "danger": False},
+      {"id": "toggle_snapshots", "text": tr("Profiles & Snapshots"), "danger": False},
       {"id": "report_issue", "text": tr("Report Issue"), "danger": False},
       {"id": "flash_panda", "text": tr("Flash Panda"), "danger": False},
       {"id": "clear_data", "text": tr("Clear Driving Data"), "danger": True},
@@ -936,27 +938,36 @@ class StarPilotSystemLayout(_SettingsPage):
       options = [tr("Create Backup"), tr("Restore Backup"), tr("Delete Backup")]
       title = tr("System Backups")
     else:
-      options = [tr("Save Toggle Snapshot"), tr("Restore Toggle Snapshot"), tr("Delete Toggle Snapshot")]
-      title = tr("Toggle Snapshots")
+      options = [
+        tr("Profile Slot A"),
+        tr("Profile Slot B"),
+        tr("Save Named Snapshot"),
+        tr("Restore Named Snapshot"),
+        tr("Delete Named Snapshot"),
+      ]
+      title = tr("Settings Profiles & Snapshots")
 
     def on_select(res):
       if res != DialogResult.CONFIRM or not dialog.selection:
         return
       selection = dialog.selection
-      if selection == options[0]:
-        if backup_kind == "system":
+      if backup_kind == "system":
+        if selection == options[0]:
           self._on_create_backup()
-        else:
-          self._on_create_toggle_backup()
-      elif selection == options[1]:
-        if backup_kind == "system":
+        elif selection == options[1]:
           self._on_restore_backup()
-        else:
-          self._on_restore_toggle_backup()
-      elif selection == options[2]:
-        if backup_kind == "system":
+        elif selection == options[2]:
           self._on_delete_backup()
-        else:
+      else:
+        if selection == options[0]:
+          self._open_param_profile("a")
+        elif selection == options[1]:
+          self._open_param_profile("b")
+        elif selection == options[2]:
+          self._on_create_toggle_backup()
+        elif selection == options[3]:
+          self._on_restore_toggle_backup()
+        elif selection == options[4]:
           self._on_delete_toggle_backup()
 
     dialog = MultiOptionDialog(title, options, callback=on_select)
@@ -1216,6 +1227,70 @@ class StarPilotSystemLayout(_SettingsPage):
     self._keyboard.set_text("")
     self._keyboard.set_callback(lambda result: on_name(result, self._keyboard.text))
     gui_app.push_widget(self._keyboard)
+
+  def _open_param_profile(self, slot: str):
+    status = param_profiles.profile_status(slot, profile_root=TOGGLE_BACKUPS)
+    options = [tr("Save Current Settings")]
+    if status["saved"] and not status.get("invalid"):
+      options.append(tr("Load Saved Settings"))
+
+    def _on_select(res):
+      if res != DialogResult.CONFIRM or not dialog.selection:
+        return
+      if dialog.selection == options[0]:
+        if ui_state.started:
+          gui_app.push_widget(alert_dialog(tr("Settings profiles can only be saved while parked.")))
+          return
+        if status["saved"]:
+          gui_app.push_widget(ConfirmDialog(
+            tr("Overwrite {} with your current settings?").format(status["label"]),
+            tr("Overwrite"),
+            callback=lambda confirm_res: self._save_param_profile(slot) if confirm_res == DialogResult.CONFIRM else None,
+          ))
+        else:
+          self._save_param_profile(slot)
+      elif len(options) > 1 and dialog.selection == options[1]:
+        if ui_state.started:
+          gui_app.push_widget(alert_dialog(tr("Settings profiles can only be loaded while parked.")))
+          return
+        gui_app.push_widget(ConfirmDialog(
+          tr("Load {} and overwrite your current settings?").format(status["label"]),
+          tr("Load"),
+          callback=lambda confirm_res: self._load_param_profile(slot) if confirm_res == DialogResult.CONFIRM else None,
+        ))
+
+    dialog = MultiOptionDialog(status["label"], options, callback=_on_select)
+    gui_app.push_widget(dialog)
+
+  def _save_param_profile(self, slot: str):
+    try:
+      status = param_profiles.save_profile(
+        self._params,
+        slot,
+        allowed_keys=param_profiles.eligible_profile_keys(self._params, excluded_keys=STARPILOT_EXCLUDED_KEYS),
+        profile_root=TOGGLE_BACKUPS,
+      )
+    except param_profiles.ParamProfileError as error:
+      gui_app.push_widget(alert_dialog(str(error)))
+      return
+    gui_app.push_widget(alert_dialog(tr("Saved current settings to {}.").format(status["label"])))
+
+  def _load_param_profile(self, slot: str):
+    try:
+      result = param_profiles.load_profile(
+        self._params,
+        slot,
+        allowed_keys=param_profiles.eligible_profile_keys(self._params, excluded_keys=STARPILOT_EXCLUDED_KEYS),
+        profile_root=TOGGLE_BACKUPS,
+        legacy_renames=LEGACY_STARPILOT_PARAM_RENAMES,
+      )
+    except param_profiles.ParamProfileError as error:
+      gui_app.push_widget(alert_dialog(str(error)))
+      return
+    update_starpilot_toggles()
+    gui_app.push_widget(alert_dialog(
+      tr("Loaded {} settings from {}.").format(result["restoredCount"], result["label"])
+    ))
 
   def _on_restore_toggle_backup(self):
     backups = self._get_backups("toggle_backups")

@@ -11,7 +11,6 @@ TransmissionType = structs.CarParams.TransmissionType
 # Must match VOLVO_SPEED_TO_MS in opendbc/safety/modes/volvo.h.
 SPEED_TO_MS = 0.003977
 STEERING_PRESSED_THRESHOLD = 2
-STEERING_DISENGAGE_THRESHOLD = 5
 
 
 class CarState(CarStateBase):
@@ -75,11 +74,9 @@ class CarState(CarStateBase):
     ret.steeringAngleDeg = cp_party.vl['PSCM']['PSCM_ANGLE_SENSOR'] # openpilot expects a negative value for a right turn
     #ret.steeringAngleDeg = cp_party.vl['SAS']['SAS_ANGLE_SENSOR']
 
-    # Driver steering torque feedback (used for driver override detection)
     ret.steeringTorque = -cp_party.vl['DRIVER_INPUT']['STEERING_DRIVER_INPUT']  # Car right turn is negative, openpilot right turn is positive
     driver_input = abs(cp_party.vl['DRIVER_INPUT']['STEERING_DRIVER_INPUT'])
     ret.steeringPressed = driver_input > STEERING_PRESSED_THRESHOLD
-    ret.steeringDisengage = driver_input > STEERING_DISENGAGE_THRESHOLD
 
     # EPS status - placeholder until actual signal is found
     self.eps_active = True  # Assume EPS is active for now

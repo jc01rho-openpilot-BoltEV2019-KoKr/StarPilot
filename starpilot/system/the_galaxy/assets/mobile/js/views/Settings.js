@@ -2,7 +2,7 @@ import { api, showSnackbar } from "../api.js"
 import { navigate, store } from "../store.js"
 import {
   applyParamChange, countAdvancedHiddenByDeveloperMode, GALAXY_DEVELOPER_MODE_KEY, isSettingVisible,
-  slugifySectionName,
+  resolveVehicleUnitParam, slugifySectionName,
 } from "../params.js"
 import { SettingTree } from "../components/SettingTree.js"
 import { GalaxyToggleCard } from "../components/GalaxyToggleCard.js"
@@ -82,7 +82,9 @@ export const Settings = {
     matchesFilter(p) {
       if (!this.searchTerm) return true
       const q = this.searchTerm.toLowerCase()
-      return [p.label, p.key, p.description].some((v) => String(v || "").toLowerCase().includes(q))
+      const displayParam = resolveVehicleUnitParam(p, this.values)
+      return [displayParam.label, displayParam.key, displayParam.description, displayParam.unit, displayParam.unit_search_terms]
+        .some((v) => String(v || "").toLowerCase().includes(q))
     },
     selectSection(slug) {
       if (slug !== this.activeSectionSlug) navigate("/settings/" + slug)
@@ -132,7 +134,7 @@ export const Settings = {
           <template v-for="section in searchResults" :key="section.slug">
             <GalaxySection :title="section.name + ' (' + section.matches.length + ')'" :icon="section.icon || 'bi-search'" :default-open="false">
               <template v-for="p in section.matches" :key="p.key">
-                <GalaxyToggleCard :param="p" :value="values[p.key]" :locked="lockReason(p) !== ''"
+                <GalaxyToggleCard :param="p" :value="values[p.key]" :values="values" :locked="lockReason(p) !== ''"
                   @change="onParamChange" />
               </template>
             </GalaxySection>

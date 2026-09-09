@@ -71,6 +71,9 @@ class VCruiseHelper:
     long_interval = self._get_cruise_delta_interval(getattr(starpilot_toggles, "cruise_increase_long", None))
     return short_interval, long_interval
 
+  def _uses_software_cruise(self) -> bool:
+    return bool(self.gm_cc_only or self.redneck_non_pcm or not self.CP.pcmCruise)
+
   @property
   def v_cruise_initialized(self):
     return self.v_cruise_kph != V_CRUISE_UNSET
@@ -90,7 +93,7 @@ class VCruiseHelper:
     self.v_cruise_kph_last = self.v_cruise_kph
 
     if CS.cruiseState.available:
-      if self.gm_cc_only or self.redneck_non_pcm or not self.CP.pcmCruise:
+      if self._uses_software_cruise():
         # if stock cruise is completely disabled, then we can use our own set speed logic
         self._update_v_cruise_non_pcm(CS, enabled, is_metric, speed_limit_changed, starpilot_toggles, starpilot_car_state,
                                       slc_target_with_offset)
@@ -206,13 +209,12 @@ class VCruiseHelper:
 
   def initialize_v_cruise(self, CS, experimental_mode: bool, resume_prev_button: bool,
                           starpilot_toggles: SimpleNamespace, desired_speed_limit: float = 0.0) -> None:
-    # initializing is handled by the PCM
-    if self.CP.pcmCruise and not (self.gm_cc_only or self.redneck_non_pcm):
+    if self.CP.pcmCruise and not self._uses_software_cruise():
       return
 
     engage_floor_kph = max(V_CRUISE_MIN, 7.0 * CV.MPH_TO_KPH)
     resume_pressed = any(b.type in (ButtonType.accelCruise, ButtonType.resumeCruise) for b in CS.buttonEvents)
-    remembered_resume = resume_prev_button and (self.gm_cc_only or self.redneck_non_pcm)
+    remembered_resume = resume_prev_button and self._uses_software_cruise()
 
     if self.v_cruise_initialized and (resume_pressed or remembered_resume):
       self.v_cruise_kph = self.v_cruise_kph_last

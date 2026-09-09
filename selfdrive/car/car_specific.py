@@ -202,7 +202,7 @@ class CarSpecificEvents:
       ray_ev = self.CP.carFingerprint == HYUNDAI_CAR.KIA_RAY_EV
       events = self.create_common_events(
         CS, CS_prev, extra_gears=extra_gears,
-        pcm_enable=self.CP.pcmCruise and not ray_ev,
+        pcm_enable=self.CP.pcmCruise,
         allow_button_cancel=False,
         ignore_cruise_state=ray_ev,
       )

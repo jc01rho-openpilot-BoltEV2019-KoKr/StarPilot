@@ -37,11 +37,15 @@ CONTROLLER_ACTION_BOOKMARK = "__starpilot_controller_action__:bookmark"
 CONTROLLER_ACTION_PULSE_AND_GLIDE = "__starpilot_controller_action__:pulse_and_glide"
 CONTROLLER_ACTION_FORCE_COAST = "__starpilot_controller_action__:force_coast"
 CONTROLLER_ACTION_TOGGLE_AOL = "__starpilot_controller_action__:toggle_aol"
+CONTROLLER_ACTION_ENGAGE = "__starpilot_controller_action__:engage_openpilot"
+CONTROLLER_ACTION_DISENGAGE = "__starpilot_controller_action__:disengage_openpilot"
 CONTROLLER_ACTION_COUNTERS = {
   CONTROLLER_ACTION_BOOKMARK: "WheelButtonBookmarkCounter",
   CONTROLLER_ACTION_PULSE_AND_GLIDE: "WheelControlPulseGlideCounter",
   CONTROLLER_ACTION_FORCE_COAST: "WheelControlForceCoastCounter",
   CONTROLLER_ACTION_TOGGLE_AOL: "WheelControlAOLCounter",
+  CONTROLLER_ACTION_ENGAGE: "WheelControlEngageCounter",
+  CONTROLLER_ACTION_DISENGAGE: "WheelControlDisengageCounter",
 }
 CONTROLLER_ACTION_OPTIONS = (
   {
@@ -80,6 +84,18 @@ CONTROLLER_ACTION_OPTIONS = (
     "key": CONTROLLER_ACTION_TOGGLE_AOL,
     "label": "Toggle AOL",
     "description": "Toggles Always On Lateral like the vehicle LKAS button; it does not change the AOL setting.",
+    "section": "Controller Actions",
+  },
+  {
+    "key": CONTROLLER_ACTION_ENGAGE,
+    "label": "Engage Openpilot",
+    "description": "Requests engagement through the normal openpilot readiness and safety checks.",
+    "section": "Controller Actions",
+  },
+  {
+    "key": CONTROLLER_ACTION_DISENGAGE,
+    "label": "Disengage Openpilot",
+    "description": "Immediately disengages openpilot like the vehicle cancel button.",
     "section": "Controller Actions",
   },
 )
@@ -485,6 +501,8 @@ def execute_controller_action(index: int, params: Params, params_memory: Params)
     return set_controller_cruise_speed(slot.get("value"), params, params_memory)
   if slot.get("key") == CONTROLLER_ACTION_SELFIE:
     return request_comma_selfie()
+  if slot.get("key") in (CONTROLLER_ACTION_ENGAGE, CONTROLLER_ACTION_DISENGAGE) and not params.get_bool("IsOnroad"):
+    return False
   if slot.get("key") in CONTROLLER_ACTION_COUNTERS:
     return trigger_controller_action(slot["key"], params_memory)
   return execute_favorite_key(slot.get("key"), params, params_memory)

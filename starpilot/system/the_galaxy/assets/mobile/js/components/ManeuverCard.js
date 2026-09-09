@@ -63,7 +63,7 @@ export const ManeuverCard = {
         <p style="color: var(--text-muted); line-height:1.5;">{{ intro }}</p>
         <div style="display:flex; gap:8px; margin: 12px 0;">
           <button type="button" class="gx-btn" :disabled="busy" @click="run('start')">Start / Arm</button>
-          <button type="button" class="gx-btn" style="background:var(--error);color:var(--on-error);" :disabled="busy" @click="run('stop')">Stop</button>
+          <button type="button" class="gx-btn gx-btn--danger" :disabled="busy" @click="run('stop')">Stop</button>
         </div>
         <div v-if="loading" class="gx-loading">Loading status...</div>
         <dl v-else-if="data" class="gx-stat-grid" style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
