@@ -8,7 +8,7 @@ from openpilot.selfdrive.ui.widgets.exp_mode_button import ExperimentalModeButto
 from openpilot.selfdrive.ui.widgets.drive_stats import DriveStatsDashboard
 from openpilot.selfdrive.ui.widgets.home_info_card import HomeInfoCard
 from openpilot.selfdrive.ui.widgets.setup import SetupWidget
-from openpilot.selfdrive.ui.lib.starpilot_version import starpilot_display_description
+from openpilot.selfdrive.ui.lib.starpilot_version import home_screen_name, starpilot_display_description
 from openpilot.starpilot.common.model_lab import model_lab_pair_display_name_from_params
 from openpilot.system.ui.lib.text_measure import measure_text_cached
 from openpilot.system.ui.lib.application import gui_app, FontWeight, MousePos
@@ -109,24 +109,18 @@ class HomeLayout(Widget):
       self._render_alerts_view()
 
   def _update_state(self):
-    self.header_rect = rl.Rectangle(
-      self._rect.x + CONTENT_MARGIN, self._rect.y + CONTENT_MARGIN, self._rect.width - 2 * CONTENT_MARGIN, HEADER_HEIGHT
-    )
+    self.header_rect = rl.Rectangle(self._rect.x + CONTENT_MARGIN, self._rect.y + CONTENT_MARGIN, self._rect.width - 2 * CONTENT_MARGIN, HEADER_HEIGHT)
 
     content_y = self._rect.y + CONTENT_MARGIN + HEADER_HEIGHT + SPACING
     content_height = self._rect.height - CONTENT_MARGIN - HEADER_HEIGHT - SPACING - CONTENT_MARGIN
 
-    self.content_rect = rl.Rectangle(
-      self._rect.x + CONTENT_MARGIN, content_y, self._rect.width - 2 * CONTENT_MARGIN, content_height
-    )
+    self.content_rect = rl.Rectangle(self._rect.x + CONTENT_MARGIN, content_y, self._rect.width - 2 * CONTENT_MARGIN, content_height)
 
     left_width = self.content_rect.width - RIGHT_COLUMN_WIDTH - SPACING
 
     self.left_column_rect = rl.Rectangle(self.content_rect.x, self.content_rect.y, left_width, self.content_rect.height)
 
-    self.right_column_rect = rl.Rectangle(
-      self.content_rect.x + left_width + SPACING, self.content_rect.y, RIGHT_COLUMN_WIDTH, self.content_rect.height
-    )
+    self.right_column_rect = rl.Rectangle(self.content_rect.x + left_width + SPACING, self.content_rect.y, RIGHT_COLUMN_WIDTH, self.content_rect.height)
 
     self.update_notif_rect.x = self.header_rect.x
     self.update_notif_rect.y = self.header_rect.y + (self.header_rect.height - 60) // 2
@@ -180,16 +174,17 @@ class HomeLayout(Widget):
     if self.update_available or self.alert_count > 0:
       version_text_width -= SPACING * 1.5
 
-    version_rect = rl.Rectangle(self.header_rect.x + self.header_rect.width - version_text_width, self.header_rect.y,
-                                version_text_width, self.header_rect.height)
-    brand_text = "StarPilot"
-    detail_text = self._version_text.removeprefix(brand_text)
-    brand_font = gui_app.font(FontWeight.BRAND)
+    version_rect = rl.Rectangle(
+      self.header_rect.x + self.header_rect.width - version_text_width, self.header_rect.y, version_text_width, self.header_rect.height
+    )
+    brand_text = home_screen_name(self.params)
+    detail_text = self._version_text[len(brand_text) :] if self._version_text.startswith(brand_text) else self._version_text
+    brand_font_weight = FontWeight.BRAND if brand_text.isascii() else FontWeight.MEDIUM
+    brand_font = gui_app.font(brand_font_weight)
     version_font_size = 48
 
     def _measure_header(font_size: int) -> tuple[rl.Vector2, rl.Vector2]:
-      return (measure_text_cached(brand_font, brand_text, font_size + 2),
-              measure_text_cached(font, detail_text, font_size))
+      return (measure_text_cached(brand_font, brand_text, font_size + 2), measure_text_cached(font, detail_text, font_size))
 
     brand_size, detail_size = _measure_header(version_font_size)
     total_width = brand_size.x + detail_size.x
@@ -201,7 +196,7 @@ class HomeLayout(Widget):
     rendered_width = min(total_width, version_rect.width)
     text_x = version_rect.x + version_rect.width - rendered_width
     brand_rect = rl.Rectangle(text_x, version_rect.y, min(brand_size.x, rendered_width), version_rect.height)
-    gui_label(brand_rect, brand_text, version_font_size + 2, rl.WHITE, font_weight=FontWeight.BRAND, elide_right=False)
+    gui_label(brand_rect, brand_text, version_font_size + 2, rl.WHITE, font_weight=brand_font_weight, elide_right=False)
 
     detail_width = max(0.0, rendered_width - brand_rect.width)
     if detail_text and detail_width > 0:
@@ -223,9 +218,7 @@ class HomeLayout(Widget):
 
   def _render_right_column(self):
     exp_height = 125
-    exp_rect = rl.Rectangle(
-      self.right_column_rect.x, self.right_column_rect.y, self.right_column_rect.width, exp_height
-    )
+    exp_rect = rl.Rectangle(self.right_column_rect.x, self.right_column_rect.y, self.right_column_rect.width, exp_height)
     self._exp_mode_button.render(exp_rect)
 
     setup_rect = rl.Rectangle(
@@ -261,19 +254,20 @@ class HomeLayout(Widget):
     self._prev_alerts_present = alerts_present
 
   def _get_version_text(self) -> str:
-    brand = "StarPilot"
+    brand = home_screen_name(self.params)
     description = starpilot_display_description(self.params.get("UpdaterCurrentDescription"))
     version_text = f"{brand} {description}" if description else brand
 
-    model_name = (model_lab_pair_display_name_from_params(self.params) or
-                  self.params.get("DrivingModelName", encoding="utf-8") or
-                  self.params.get_default_value("DrivingModelName"))
+    model_name = (
+      model_lab_pair_display_name_from_params(self.params)
+      or self.params.get("DrivingModelName", encoding="utf-8")
+      or self.params.get_default_value("DrivingModelName")
+    )
     if isinstance(model_name, bytes):
       model_name = model_name.decode("utf-8", errors="ignore")
     model_name = str(model_name or "").replace("_default", "").replace("(Default)", "").strip()
 
     if not model_name:
-      model_name = (self.params.get("Model", encoding="utf-8") or
-                    self.params.get("DrivingModel", encoding="utf-8") or "").strip()
+      model_name = (self.params.get("Model", encoding="utf-8") or self.params.get("DrivingModel", encoding="utf-8") or "").strip()
 
     return f"{version_text} - {model_name}" if model_name else version_text
