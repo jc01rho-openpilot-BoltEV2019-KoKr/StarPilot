@@ -73,6 +73,12 @@ git merge upstream/StarPilot --no-edit
   print('capnp OK: load, ordinals unique+contiguous, union init, round-trip')
   PY
   ```
+  - **신규 params 키 3중 게이트** (2026-09 HomeScreenName 무한 크래시: `params_pyx`는 모르는 키에 `KeyError`가 아니라 `UnknownKeyName`을 던진다. 게다가 2026-09-03~09 빌드 커밋이 옛 헤더로 `.a`/`.so`를 찍어 소스(`.h`)와 산출물(`.a`/`.so`)이 실제로 불일치했음):
+    - **(A) 산출물-헤더 정합 검증**: 머지에 `params_keys.h` 신규 키가 있으면, 커밋된 바이너리에 키 문자열이 실제로 들어있는지 확인한다. `strings -a common/libcommon.a common/params_pyx.so | grep -c '^<신규키>$'` → 0이면 **그 바이너리는 그 키를 모른다**. 원인 수정(해당 헤더로 재빌드) 없이 push 금지.
+    - **(B) UI 시작 경로 감사**: 신규 키마다 `grep -rn '<키>' --include='*.py' selfdrive/ui/ system/ui/ | grep -E 'get\(|get_default_value|get_bool|get_int'` → 호출부 전수 확인. `home.py::_get_version_text`처럼 매 프레임 도는 렌더 경로(`_render`/`_refresh`)에서 읽으면 크래시 = 검은 화면이므로 최우선.
+    - **(C) 수정 규칙**: `params.get`/`get_default_value` 호출을 `try/except Exception`으로 감싸고 상수 폴백(예: `DEFAULT_HOME_SCREEN_NAME`). `except (AttributeError, KeyError)` 한정은 금지.
+    - **테스트**: 신규 키마다 구빌드 더블(`get`/`get_default_value` 모두에서 예외를 던지는 FakeParams)로 폴백 값을 단언하는 테스트 1건 추가 (참조: `selfdrive/ui/lib/tests/test_starpilot_version.py::test_home_screen_name_survives_unknown_key`).
+    - **기존 키도 동일**: `DrivingModelName` 등 `home.py:264`, `mici/layouts/home.py:207`의 기존 `get_default_value` 호출도 머지 시점에 broad-except 여부를 함께 확인한다.
   - **ordinal 규칙**: union arm은 discriminant ordinal(0..N)을 중복 없이 연속으로 유지해야 한다. 로컬 커스텀 필드(예: `naviData @152`)는 업스트림 신규 필드(예: `driverMonitoringState @151`)와 번호가 겹치지 않도록 다음 빈 번호로 배치한다.
   - **중첩 struct/enum 변경은 별도 round-trip·consumer 검증이 필요**: `Event` top-level ordinal 검증만으로는 `DriverData.sleepProb`, `DriverMonitoringState.lockoutCount`/`lockoutMinutesRemaining` 같은 중첩 필드 추가·이름 변경을 **기계적으로 탐지할 수 없다**. 변경된 중첩 struct/enum(예: `DriverStateV2`, `DriverMonitoringState.MonitoringPolicy`)은:
     - **serialize/deserialize round-trip**: 값 채워서 `to_bytes()`→`from_bytes()`→필드 접근 정상 확인.
@@ -97,6 +103,6 @@ git push origin paddle5_215-55-17
 
 ## 원칙
 - Step 1 충돌은 파일 유형별로 superset 확인/3-way 머지 또는 `--theirs`(upstream 최신), `--ours`는 예외에만. Step 2 충돌만 `--ours`(215-55-17 지역 커스터마이징 유지).
-- **충돌 해결 후 커밋 전 반드시 py_compile + capnp load+ordinal+union init+round-trip+consumer 검증(Step 1.5)을 통과해야 한다. 실패 시 push 금지.**
+- **충돌 해결 후 커밋 전 반드시 py_compile + capnp load+ordinal+union init+round-trip+consumer + 신규 params 키 UI-안전 게이트(Step 1.5)를 통과해야 한다. 실패 시 push 금지.**
 - merge는 `--no-edit`으로 자동 커밋 메시지 사용.
 - 완료 후 `paddle5` 브랜치에서 대기.

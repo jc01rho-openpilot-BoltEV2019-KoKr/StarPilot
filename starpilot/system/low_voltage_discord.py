@@ -9,11 +9,29 @@ import time
 from typing import Any, Callable
 from urllib.parse import urlparse
 
+try:
+  from openpilot.common.swaglog import cloudlog
+except Exception:  # host test environments may lack the compiled msgq/cereal backend
+  cloudlog = None
+
 
 OWNER_GITHUB_USERNAME = "jc01rho"
 MIN_VALID_VOLTAGE_MV = 6000
 MAX_VALID_VOLTAGE_MV = 18000
 MAX_DISCORD_CONTENT_LENGTH = 2000
+
+
+def params_call(fn, *args, default=None):
+  """Run a params operation, tolerating keys unknown to a stale on-device build.
+
+  params_pyx raises UnknownKeyName for keys missing from its compiled key table
+  (stale committed .so artifacts); degrade gracefully instead of crashing."""
+  try:
+    return fn(*args)
+  except Exception:
+    if cloudlog is not None:
+      cloudlog.warning(f"params operation on {args[0] if args else '?'} failed; key missing from build?")
+    return default
 
 
 @dataclass
@@ -54,15 +72,14 @@ class LowVoltageDriveReporter:
       self.summary = DriveVoltageSummary()
     elif not started and self.started and self.summary.samples > 0 and reporting_enabled(self.params):
       drive_id = _param_text(self.params, "CurrentRoute").strip() or datetime.datetime.now(datetime.timezone.utc).isoformat()
-      pending = make_pending_report(self.summary, threshold_v=self.params.get_float("LowVoltageShutdown"),
-                                    drive_id=drive_id, car_fingerprint=car_fingerprint)
+      pending = make_pending_report(self.summary, threshold_v=self.params.get_float("LowVoltageShutdown"), drive_id=drive_id, car_fingerprint=car_fingerprint)
       save_pending_report(self.params, pending)
     self.started = started
     return pending
 
 
 def _param_text(params, key: str) -> str:
-  value = params.get(key)
+  value = params_call(params.get, key, default="")
   if isinstance(value, bytes):
     value = value.decode("utf-8", errors="replace")
   return str(value or "")
@@ -82,7 +99,11 @@ def validate_webhook_url(url: str) -> bool:
 
 
 def reporting_enabled(params) -> bool:
-  return owner_is_allowed(params) and params.get_bool("LowVoltageDiscordReport") and validate_webhook_url(_param_text(params, "LowVoltageDiscordWebhook"))
+  return (
+    owner_is_allowed(params)
+    and params_call(params.get_bool, "LowVoltageDiscordReport", default=False)
+    and validate_webhook_url(_param_text(params, "LowVoltageDiscordWebhook"))
+  )
 
 
 def extract_voltage_mv(peripheral_state, *, alive: bool, valid: bool) -> int | None:
@@ -133,7 +154,7 @@ def make_pending_report(summary: DriveVoltageSummary, *, threshold_v: float, dri
 
 
 def _pending_queue_from_params(params) -> list[dict[str, Any]]:
-  pending = params.get("LowVoltageDiscordPendingReport")
+  pending = params_call(params.get, "LowVoltageDiscordPendingReport", default="")
   if not pending:
     return []
   if isinstance(pending, bytes):
@@ -155,22 +176,35 @@ def send_discord_payload(params, payload: dict[str, str], *, run: Callable = sub
     return DeliveryResult(False, "disabled")
   webhook = _param_text(params, "LowVoltageDiscordWebhook").strip()
   command = [
-    "curl", "--fail-with-body", "--silent", "--show-error",
-    "--connect-timeout", "5", "--max-time", "15", "--retry", "2", "--retry-delay", "2",
-    "--config", "-",
+    "curl",
+    "--fail-with-body",
+    "--silent",
+    "--show-error",
+    "--connect-timeout",
+    "5",
+    "--max-time",
+    "15",
+    "--retry",
+    "2",
+    "--retry-delay",
+    "2",
+    "--config",
+    "-",
   ]
+
   def curl_config_quote(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\r")
 
   body = json.dumps(payload, separators=(",", ":"))
-  curl_config = "\n".join((
-    f'url = "{curl_config_quote(webhook)}"',
-    'header = "Content-Type: application/json"',
-    f'data = "{curl_config_quote(body)}"',
-  ))
+  curl_config = "\n".join(
+    (
+      f'url = "{curl_config_quote(webhook)}"',
+      'header = "Content-Type: application/json"',
+      f'data = "{curl_config_quote(body)}"',
+    )
+  )
   try:
-    completed = run(command, input=curl_config, capture_output=True, text=True,
-                    check=False, shell=False, timeout=20)
+    completed = run(command, input=curl_config, capture_output=True, text=True, check=False, shell=False, timeout=20)
   except subprocess.TimeoutExpired:
     return DeliveryResult(False, "timeout")
   except (OSError, subprocess.SubprocessError):
@@ -192,21 +226,21 @@ def deliver_pending_report(params, *, run: Callable = subprocess.run) -> Deliver
     return DeliveryResult(False, "duplicate")
   try:
     summary = DriveVoltageSummary(**pending["summary"])
-    payload = build_discord_payload(summary, threshold_v=float(pending["threshold_v"]), drive_id=str(pending["drive_id"]),
-                                    car_fingerprint=str(pending.get("car_fingerprint") or ""))
+    payload = build_discord_payload(
+      summary, threshold_v=float(pending["threshold_v"]), drive_id=str(pending["drive_id"]), car_fingerprint=str(pending.get("car_fingerprint") or "")
+    )
   except (TypeError, ValueError):
     _save_pending_queue(params, queue[1:])
     return DeliveryResult(False, "invalid_pending")
 
   result = send_discord_payload(params, payload, run=run)
   if result.ok:
-    params.put("LowVoltageDiscordLastDrive", str(pending["id"]))
+    params_call(params.put, "LowVoltageDiscordLastDrive", str(pending["id"]))
     _save_pending_queue(params, queue[1:])
   return result
 
 
-def deliver_after_offroad_delay(params, *, delay_s: float = 5.0, sleep: Callable = time.sleep,
-                                run: Callable = subprocess.run) -> DeliveryResult:
+def deliver_after_offroad_delay(params, *, delay_s: float = 5.0, sleep: Callable = time.sleep, run: Callable = subprocess.run) -> DeliveryResult:
   sleep(delay_s)
   if params.get_bool("IsOnroad"):
     return DeliveryResult(False, "onroad")
@@ -215,9 +249,9 @@ def deliver_after_offroad_delay(params, *, delay_s: float = 5.0, sleep: Callable
 
 def _save_pending_queue(params, queue: list[dict[str, Any]]) -> None:
   if queue:
-    params.put("LowVoltageDiscordPendingReport", queue)
+    params_call(params.put, "LowVoltageDiscordPendingReport", queue)
   else:
-    params.remove("LowVoltageDiscordPendingReport")
+    params_call(params.remove, "LowVoltageDiscordPendingReport")
 
 
 def save_pending_report(params, pending: dict[str, Any]) -> None:
@@ -231,7 +265,7 @@ def webhook_status(params) -> dict[str, bool]:
   return {
     "owner": owner_is_allowed(params),
     "configured": validate_webhook_url(_param_text(params, "LowVoltageDiscordWebhook")),
-    "enabled": params.get_bool("LowVoltageDiscordReport"),
+    "enabled": params_call(params.get_bool, "LowVoltageDiscordReport", default=False),
   }
 
 
@@ -239,11 +273,11 @@ def configure_webhook(params, webhook: str) -> bool:
   webhook = str(webhook or "").strip()
   if not owner_is_allowed(params) or not validate_webhook_url(webhook):
     return False
-  params.put("LowVoltageDiscordWebhook", webhook)
+  params_call(params.put, "LowVoltageDiscordWebhook", webhook)
   return True
 
 
 def remove_webhook(params) -> None:
-  params.put_bool("LowVoltageDiscordReport", False)
-  params.remove("LowVoltageDiscordWebhook")
-  params.remove("LowVoltageDiscordPendingReport")
+  params_call(params.put_bool, "LowVoltageDiscordReport", False)
+  params_call(params.remove, "LowVoltageDiscordWebhook")
+  params_call(params.remove, "LowVoltageDiscordPendingReport")
