@@ -13,14 +13,19 @@ def normalize_home_screen_name(value: str | bytes | None) -> str:
 
 def home_screen_name(params) -> str:
   try:
-    value = params.get("HomeScreenName", encoding="utf-8")
-  except TypeError:
-    value = params.get("HomeScreenName")
+    try:
+      value = params.get("HomeScreenName", encoding="utf-8")
+    except TypeError:
+      value = params.get("HomeScreenName")
+  except Exception:
+    # Older on-device builds do not know this key at all
+    # (params_pyx raises UnknownKeyName, not KeyError).
+    value = None
 
   if not value:
     try:
       value = params.get_default_value("HomeScreenName")
-    except (AttributeError, KeyError):
+    except Exception:
       value = DEFAULT_HOME_SCREEN_NAME
 
   return normalize_home_screen_name(value)
