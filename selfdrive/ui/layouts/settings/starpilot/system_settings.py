@@ -22,7 +22,7 @@ from openpilot.system.ui.widgets.option_dialog import MultiOptionDialog
 from openpilot.system.ui.widgets.label import gui_label
 
 from openpilot.selfdrive.ui.ui_state import device, ui_state
-from openpilot.starpilot.system.low_voltage_discord import configure_webhook, owner_is_allowed, remove_webhook, validate_webhook_url
+from openpilot.starpilot.system.low_voltage_discord import configure_webhook, owner_is_allowed, params_call, remove_webhook, validate_webhook_url
 from openpilot.selfdrive.ui.layouts.settings.starpilot.panel import _SettingsPage
 from openpilot.selfdrive.ui.layouts.settings.starpilot.scribble import draw_custom_icon
 from openpilot.selfdrive.ui.layouts.settings.starpilot.aethergrid import (
@@ -97,7 +97,6 @@ REPORT_CATEGORIES = [
 ]
 
 
-
 PANEL_STYLE = DEFAULT_PANEL_STYLE
 
 SYSTEM_PANEL_METRICS = AETHER_LIST_METRICS
@@ -132,10 +131,7 @@ class SystemSettingsManagerView(PanelManagerView):
     self._display_slider_keys = ["ScreenBrightness", "ScreenBrightnessOnroad", "ScreenTimeout", "ScreenTimeoutOnroad"]
     self._power_slider_keys = ["DeviceShutdown", "LowVoltageShutdown"]
 
-    shutdown_labels = {
-      hours: f"{hours} " + (tr("hour") if hours == 1 else tr("hours"))
-      for hours in range(1, 31)
-    }
+    shutdown_labels = {hours: f"{hours} " + (tr("hour") if hours == 1 else tr("hours")) for hours in range(1, 31)}
     brightness_labels = {101: tr("Auto"), 0: tr("Off")}
 
     self._slider_specs: dict[str, dict[str, Any]] = {
@@ -300,12 +296,14 @@ class SystemSettingsManagerView(PanelManagerView):
       },
     ]
     if owner_is_allowed(self._controller._params):
-      self._toggle_defs.append({
-        "title": tr("Discord Battery Report"),
-        "subtitle": tr("Send the Panda/comma 12 V supply voltage after each drive."),
-        "get_state": lambda: self._controller._params.get_bool("LowVoltageDiscordReport"),
-        "set_state": self._controller._on_low_voltage_discord_toggle,
-      })
+      self._toggle_defs.append(
+        {
+          "title": tr("Discord Battery Report"),
+          "subtitle": tr("Send the Panda/comma 12 V supply voltage after each drive."),
+          "get_state": lambda: params_call(self._controller._params.get_bool, "LowVoltageDiscordReport", default=False),
+          "set_state": self._controller._on_low_voltage_discord_toggle,
+        }
+      )
 
     self._basics_tile_grid_h = 0.0
 
@@ -318,7 +316,7 @@ class SystemSettingsManagerView(PanelManagerView):
       self._connectivity_tile_grid.add_tile(tile)
     self.register_page_grid(self._connectivity_tile_grid)
     page_size = self._compute_page_size(TOGGLE_ROW_HEIGHT)
-    self._set_toggle_pages([self._toggle_defs[i:i+page_size] for i in range(0, len(self._toggle_defs), page_size)])
+    self._set_toggle_pages([self._toggle_defs[i : i + page_size] for i in range(0, len(self._toggle_defs), page_size)])
 
     self._drive_mode_control = self._child(
       AetherSegmentedControl(
@@ -332,9 +330,7 @@ class SystemSettingsManagerView(PanelManagerView):
 
   def _tab_subtitle(self, tab_id: str) -> str:
     if tab_id == "basics":
-      return tr("{} controls + {} toggles").format(
-        len(self._display_slider_keys) + len(self._power_slider_keys),
-        len(self._toggle_defs))
+      return tr("{} controls + {} toggles").format(len(self._display_slider_keys) + len(self._power_slider_keys), len(self._toggle_defs))
     return self._controller.backup_status_text()
 
   def _format_slider_value(self, key: str) -> str:
@@ -396,11 +392,11 @@ class SystemSettingsManagerView(PanelManagerView):
 
   def _on_drive_mode_change(self, idx):
     if idx == 0:
-        self._controller.handle_action("DriveDefault")
+      self._controller.handle_action("DriveDefault")
     elif idx == 1:
-        self._controller.handle_action("DriveOnroad")
+      self._controller.handle_action("DriveOnroad")
     elif idx == 2:
-        self._controller.handle_action("DriveOffroad")
+      self._controller.handle_action("DriveOffroad")
 
   def _clear_ephemeral_state(self):
     self._pressed_target = None
@@ -502,7 +498,7 @@ class SystemSettingsManagerView(PanelManagerView):
 
     if self._uses_two_columns(width):
       column_w = self._column_width(width)
-      
+
       # Reset custom heights to calculate natural measurements first
       for key in self._display_slider_keys + self._power_slider_keys:
         self._adjustor_rows[key].custom_row_height = None
@@ -512,7 +508,7 @@ class SystemSettingsManagerView(PanelManagerView):
 
       left_overhead = GROUP_TOP_INSET + 2 * GROUP_HEADER_TOTAL_HEIGHT + SECTION_GAP
       left_natural_content_h = left_overhead + display_container_h + power_container_h
-      
+
       tiles_content_h = self.measure_page_grid_height(self._connectivity_tile_grid, column_w - 24)
       right_natural_container_h = tiles_content_h + 24
 
@@ -565,17 +561,15 @@ class SystemSettingsManagerView(PanelManagerView):
       current_y = draw_group_header(x + 24, current_y, column_w - 48, tr("Display"))
       for index, key in enumerate(self._display_slider_keys):
         current_y = self._draw_slider_row(rl.Rectangle(x, current_y, column_w, 0), key, is_last=index == len(self._display_slider_keys) - 1)
-        
+
       current_y += SECTION_GAP
-      
+
       current_y = draw_group_header(x + 24, current_y, column_w - 48, tr("Power"))
       for index, key in enumerate(self._power_slider_keys):
         current_y = self._draw_slider_row(rl.Rectangle(x, current_y, column_w, 0), key, is_last=index == len(self._power_slider_keys) - 1)
 
       tg_cols = 1 if self.PANEL_STYLE.toggle_row_mode else 2
-      self._draw_two_column_tile_grid(
-        self._connectivity_tile_grid, x + column_w + self.COLUMN_GAP, y, column_w,
-        self._system_max_container_h, columns=tg_cols)
+      self._draw_two_column_tile_grid(self._connectivity_tile_grid, x + column_w + self.COLUMN_GAP, y, column_w, self._system_max_container_h, columns=tg_cols)
       return
 
     y = self._draw_slider_section(y, x, width, tr("Display"), self._display_slider_keys)
@@ -705,16 +699,14 @@ class AetherBackupsCareDialog(Widget):
     status_rect = snap_rect(rl.Rectangle(dx + MARGIN, dy + 170, content_w, 80))
     draw_list_group_shell(status_rect, style=PANEL_STYLE)
 
-    gui_label(rl.Rectangle(status_rect.x + 20, status_rect.y + 10, status_rect.width - 40, 24),
-              tr("System Status"), 22, AetherListColors.MUTED, FontWeight.SEMI_BOLD)
+    gui_label(
+      rl.Rectangle(status_rect.x + 20, status_rect.y + 10, status_rect.width - 40, 24), tr("System Status"), 22, AetherListColors.MUTED, FontWeight.SEMI_BOLD
+    )
 
     storage_text = tr("Storage: {}").format(self._controller.storage_summary())
-    backup_text = tr("Backups: {}  •  Snapshots: {}").format(
-      self._controller.backup_count_text(), self._controller.toggle_backup_count_text())
-    gui_label(rl.Rectangle(status_rect.x + 20, status_rect.y + 40, status_rect.width - 40, 24),
-              storage_text, 22, AetherListColors.HEADER, FontWeight.MEDIUM)
-    gui_label(rl.Rectangle(status_rect.x + 300, status_rect.y + 40, status_rect.width - 320, 24),
-              backup_text, 22, AetherListColors.HEADER, FontWeight.MEDIUM)
+    backup_text = tr("Backups: {}  •  Snapshots: {}").format(self._controller.backup_count_text(), self._controller.toggle_backup_count_text())
+    gui_label(rl.Rectangle(status_rect.x + 20, status_rect.y + 40, status_rect.width - 40, 24), storage_text, 22, AetherListColors.HEADER, FontWeight.MEDIUM)
+    gui_label(rl.Rectangle(status_rect.x + 300, status_rect.y + 40, status_rect.width - 320, 24), backup_text, 22, AetherListColors.HEADER, FontWeight.MEDIUM)
 
     mouse_pos = gui_app.last_mouse_event.pos
 
@@ -836,22 +828,22 @@ class StarPilotSystemLayout(_SettingsPage):
 
   def _on_low_voltage_discord_toggle(self, enabled: bool):
     if not owner_is_allowed(self._params):
-      self._params.put_bool("LowVoltageDiscordReport", False)
+      params_call(self._params.put_bool, "LowVoltageDiscordReport", False)
       return
     if not enabled:
       remove_webhook(self._params)
       return
-    if validate_webhook_url(self._params.get("LowVoltageDiscordWebhook") or ""):
-      self._params.put_bool("LowVoltageDiscordReport", True)
+    if validate_webhook_url(params_call(self._params.get, "LowVoltageDiscordWebhook", default="")):
+      params_call(self._params.put_bool, "LowVoltageDiscordReport", True)
       return
 
     def on_webhook(result: DialogResult):
       if result != DialogResult.CONFIRM:
-        self._params.put_bool("LowVoltageDiscordReport", False)
+        params_call(self._params.put_bool, "LowVoltageDiscordReport", False)
       elif configure_webhook(self._params, self._secret_keyboard.text):
-        self._params.put_bool("LowVoltageDiscordReport", True)
+        params_call(self._params.put_bool, "LowVoltageDiscordReport", True)
       else:
-        self._params.put_bool("LowVoltageDiscordReport", False)
+        params_call(self._params.put_bool, "LowVoltageDiscordReport", False)
         gui_app.push_widget(alert_dialog(tr("Enter a valid Discord webhook URL.")))
 
     self._secret_keyboard.reset(min_text_size=1)
@@ -1047,37 +1039,33 @@ class StarPilotSystemLayout(_SettingsPage):
       if ui_state.started:
         gui_app.push_widget(
           ConfirmDialog(
-            tr("Reboot required. Reboot now?"), tr("Reboot"), tr("Cancel"),
-            callback=lambda res: HARDWARE.reboot() if res == DialogResult.CONFIRM else None
+            tr("Reboot required. Reboot now?"), tr("Reboot"), tr("Cancel"), callback=lambda res: HARDWARE.reboot() if res == DialogResult.CONFIRM else None
           )
         )
 
-    gui_app.push_widget(
-      ConfirmDialog(
-        tr("Switch Connect endpoint to {}?").format(target),
-        tr("Switch"),
-        tr("Cancel"),
-        callback=on_confirm
-      )
-    )
+    gui_app.push_widget(ConfirmDialog(tr("Switch Connect endpoint to {}?").format(target), tr("Switch"), tr("Cancel"), callback=on_confirm))
 
   def _on_no_uploads_toggle(self, state):
     if state:
-      gui_app.push_widget(ConfirmDialog(
-        tr("This will prevent your drives from being uploaded to comma connect which may impact receiving support. Are you sure?"),
-        tr("Disable"),
-        callback=lambda res: self._params.put_bool("NoUploads", True) if res == DialogResult.CONFIRM else None,
-      ))
+      gui_app.push_widget(
+        ConfirmDialog(
+          tr("This will prevent your drives from being uploaded to comma connect which may impact receiving support. Are you sure?"),
+          tr("Disable"),
+          callback=lambda res: self._params.put_bool("NoUploads", True) if res == DialogResult.CONFIRM else None,
+        )
+      )
     else:
       self._params.put_bool("NoUploads", False)
 
   def _on_no_logging_toggle(self, state):
     if state:
-      gui_app.push_widget(ConfirmDialog(
-        tr("This will prevent your drives from being logged. Are you sure?"),
-        tr("Disable"),
-        callback=lambda res: self._params.put_bool("NoLogging", True) if res == DialogResult.CONFIRM else None,
-      ))
+      gui_app.push_widget(
+        ConfirmDialog(
+          tr("This will prevent your drives from being logged. Are you sure?"),
+          tr("Disable"),
+          callback=lambda res: self._params.put_bool("NoLogging", True) if res == DialogResult.CONFIRM else None,
+        )
+      )
     else:
       self._params.put_bool("NoLogging", False)
 
@@ -1115,6 +1103,7 @@ class StarPilotSystemLayout(_SettingsPage):
   def _on_delete_driving_data(self):
     def _do_delete(res):
       if res == DialogResult.CONFIRM:
+
         def _task():
           drive_paths = ["/data/media/0/realdata/", "/data/media/0/realdata_HD/", "/data/media/0/realdata_konik/"]
           for path in drive_paths:
@@ -1123,8 +1112,10 @@ class StarPilotSystemLayout(_SettingsPage):
               for entry in p.iterdir():
                 if entry.is_dir():
                   shutil.rmtree(entry, ignore_errors=True)
+
         threading.Thread(target=_task, daemon=True).start()
         gui_app.push_widget(alert_dialog(tr("Driving data deletion started.")))
+
     gui_app.push_widget(ConfirmDialog(tr("Delete all driving data and footage?"), tr("Delete"), callback=_do_delete))
 
   def _on_delete_error_logs(self):
@@ -1133,6 +1124,7 @@ class StarPilotSystemLayout(_SettingsPage):
         shutil.rmtree("/data/error_logs", ignore_errors=True)
         os.makedirs("/data/error_logs", exist_ok=True)
         gui_app.push_widget(alert_dialog(tr("Error logs deleted.")))
+
     gui_app.push_widget(ConfirmDialog(tr("Delete all error logs?"), tr("Delete"), callback=_do_delete))
 
   def _get_backups(self, folder: str = "backups") -> list[str]:
@@ -1162,10 +1154,13 @@ class StarPilotSystemLayout(_SettingsPage):
           gui_app.push_widget(alert_dialog(tr("A backup with this name already exists.")))
           return
         gui_app.push_widget(alert_dialog(tr("Backup creation started.")))
+
         def _task():
           os.makedirs("/data/backups", exist_ok=True)
           subprocess.run(["tar", "--use-compress-program=zstd", "-cf", backup_path, "/data/openpilot"])
+
         threading.Thread(target=_task, daemon=True).start()
+
     self._keyboard.reset(min_text_size=0)
     self._keyboard.set_title(tr("Name your backup"), "")
     self._keyboard.set_text("")
@@ -1181,11 +1176,13 @@ class StarPilotSystemLayout(_SettingsPage):
     def _on_select(res):
       if res == DialogResult.CONFIRM and dialog.selection:
         gui_app.push_widget(alert_dialog(tr("Restoring... device will reboot.")))
+
         def _task():
           shutil.rmtree("/data/openpilot", ignore_errors=True)
           os.makedirs("/data/openpilot", exist_ok=True)
           subprocess.run(["tar", "--use-compress-program=zstd", "-xf", f"/data/backups/{dialog.selection}", "-C", "/"])
           os.system("reboot")
+
         threading.Thread(target=_task, daemon=True).start()
 
     dialog = MultiOptionDialog(tr("Select Backup"), backups, callback=_on_select)
@@ -1222,6 +1219,7 @@ class StarPilotSystemLayout(_SettingsPage):
         os.makedirs(backup_path, exist_ok=True)
         shutil.copytree("/data/params/d", str(backup_path), dirs_exist_ok=True)
         gui_app.push_widget(alert_dialog(tr("Toggle backup created.")))
+
     self._keyboard.reset(min_text_size=0)
     self._keyboard.set_title(tr("Name your toggle backup"), "")
     self._keyboard.set_text("")
@@ -1242,22 +1240,26 @@ class StarPilotSystemLayout(_SettingsPage):
           gui_app.push_widget(alert_dialog(tr("Settings profiles can only be saved while parked.")))
           return
         if status["saved"]:
-          gui_app.push_widget(ConfirmDialog(
-            tr("Overwrite {} with your current settings?").format(status["label"]),
-            tr("Overwrite"),
-            callback=lambda confirm_res: self._save_param_profile(slot) if confirm_res == DialogResult.CONFIRM else None,
-          ))
+          gui_app.push_widget(
+            ConfirmDialog(
+              tr("Overwrite {} with your current settings?").format(status["label"]),
+              tr("Overwrite"),
+              callback=lambda confirm_res: self._save_param_profile(slot) if confirm_res == DialogResult.CONFIRM else None,
+            )
+          )
         else:
           self._save_param_profile(slot)
       elif len(options) > 1 and dialog.selection == options[1]:
         if ui_state.started:
           gui_app.push_widget(alert_dialog(tr("Settings profiles can only be loaded while parked.")))
           return
-        gui_app.push_widget(ConfirmDialog(
-          tr("Load {} and overwrite your current settings?").format(status["label"]),
-          tr("Load"),
-          callback=lambda confirm_res: self._load_param_profile(slot) if confirm_res == DialogResult.CONFIRM else None,
-        ))
+        gui_app.push_widget(
+          ConfirmDialog(
+            tr("Load {} and overwrite your current settings?").format(status["label"]),
+            tr("Load"),
+            callback=lambda confirm_res: self._load_param_profile(slot) if confirm_res == DialogResult.CONFIRM else None,
+          )
+        )
 
     dialog = MultiOptionDialog(status["label"], options, callback=_on_select)
     gui_app.push_widget(dialog)
@@ -1288,9 +1290,7 @@ class StarPilotSystemLayout(_SettingsPage):
       gui_app.push_widget(alert_dialog(str(error)))
       return
     update_starpilot_toggles()
-    gui_app.push_widget(alert_dialog(
-      tr("Loaded {} settings from {}.").format(result["restoredCount"], result["label"])
-    ))
+    gui_app.push_widget(alert_dialog(tr("Loaded {} settings from {}.").format(result["restoredCount"], result["label"])))
 
   def _on_restore_toggle_backup(self):
     backups = self._get_backups("toggle_backups")
@@ -1300,6 +1300,7 @@ class StarPilotSystemLayout(_SettingsPage):
 
     def _on_select(res):
       if res == DialogResult.CONFIRM and dialog.selection:
+
         def on_confirm(r2):
           if r2 == DialogResult.CONFIRM:
             src = Path(f"/data/toggle_backups/{dialog.selection}")
@@ -1314,6 +1315,7 @@ class StarPilotSystemLayout(_SettingsPage):
               if old_path.exists():
                 old_path.replace(new_path)
             gui_app.push_widget(alert_dialog(tr("Toggles restored.")))
+
         gui_app.push_widget(ConfirmDialog(tr("This will overwrite your current toggles."), tr("Restore"), callback=on_confirm))
 
     dialog = MultiOptionDialog(tr("Select Toggle Backup"), backups, callback=_on_select)
@@ -1351,6 +1353,7 @@ class StarPilotSystemLayout(_SettingsPage):
       if res == DialogResult.CONFIRM:
         self._params_memory.put_bool("FlashPanda", True)
         gui_app.push_widget(alert_dialog(tr("Panda flashing started. Device will reboot when finished.")))
+
     gui_app.push_widget(ConfirmDialog(tr("Flash Panda firmware?"), tr("Flash"), callback=_do_flash))
 
   def _on_report_issue(self):
@@ -1358,17 +1361,20 @@ class StarPilotSystemLayout(_SettingsPage):
       if res != DialogResult.CONFIRM or not dialog.selection:
         return
       discord_user = self._params.get("DiscordUsername", encoding='utf-8') or ""
+
       def on_discord(res2, username):
         if res2 == DialogResult.CONFIRM and username:
           self._params.put("DiscordUsername", username)
           report = {"DiscordUser": username, "Issue": dialog.selection}
           self._params_memory.put("IssueReported", report)
           gui_app.push_widget(alert_dialog(tr("Issue reported. Thank you!")))
+
       self._keyboard.reset(min_text_size=1)
       self._keyboard.set_title(tr("Discord Username"), "")
       self._keyboard.set_text(discord_user or "")
       self._keyboard.set_callback(lambda result: on_discord(result, self._keyboard.text))
       gui_app.push_widget(self._keyboard)
+
     dialog = MultiOptionDialog(tr("Select Issue"), REPORT_CATEGORIES, callback=on_category)
     gui_app.push_widget(dialog)
 
@@ -1383,6 +1389,7 @@ class StarPilotSystemLayout(_SettingsPage):
           if default is not None:
             self._params.put(k, default)
         gui_app.push_widget(alert_dialog(tr("Toggles reset to defaults.")))
+
     gui_app.push_widget(ConfirmDialog(tr("Reset all toggles to defaults?"), tr("Reset"), callback=_do_reset))
 
   def _on_reset_stock(self):
@@ -1396,4 +1403,5 @@ class StarPilotSystemLayout(_SettingsPage):
           if stock is not None:
             self._params.put(k, stock)
         gui_app.push_widget(alert_dialog(tr("Toggles reset to stock openpilot.")))
+
     gui_app.push_widget(ConfirmDialog(tr("Reset all toggles to stock openpilot?"), tr("Reset"), callback=_do_reset))

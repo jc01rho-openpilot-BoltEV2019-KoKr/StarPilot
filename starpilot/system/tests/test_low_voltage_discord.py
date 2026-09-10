@@ -50,6 +50,53 @@ def owner_params(**overrides):
   return FakeParams(values)
 
 
+class _UnknownKeyName(Exception):
+  pass
+
+
+class StaleBuildParams(FakeParams):
+  """Mimics an on-device params_pyx built before the LowVoltageDiscord keys existed."""
+
+  UNKNOWN_KEYS = {"LowVoltageDiscordReport", "LowVoltageDiscordWebhook", "LowVoltageDiscordPendingReport", "LowVoltageDiscordLastDrive"}
+
+  def get(self, key, encoding=None):
+    self._check(key)
+    return super().get(key, encoding)
+
+  def get_bool(self, key):
+    self._check(key)
+    return super().get_bool(key)
+
+  def put(self, key, value):
+    self._check(key)
+    super().put(key, value)
+
+  def remove(self, key):
+    self._check(key)
+    super().remove(key)
+
+  def _check(self, key):
+    if key in self.UNKNOWN_KEYS:
+      raise _UnknownKeyName(key)
+
+
+def test_stale_build_without_discord_keys_degrades_instead_of_crashing():
+  params = StaleBuildParams({"GithubUsername": "jc01rho", "GithubSshKeys": "ssh-ed25519 test"})
+  assert report._param_text(params, "LowVoltageDiscordWebhook") == ""
+  assert report._pending_queue_from_params(params) == []
+  assert not report.reporting_enabled(params)
+  assert report.webhook_status(params) == {"owner": True, "configured": False, "enabled": False}
+
+  summary = report.DriveVoltageSummary(latest_mv=12100, min_mv=11800, max_mv=14200, samples=10)
+  report.save_pending_report(params, report.make_pending_report(summary, threshold_v=11.8, drive_id="d1"))
+  result = report.deliver_pending_report(params, run=lambda *args, **kwargs: pytest.fail("must not send"))
+  assert not result.ok
+  assert result.error == "no_pending"
+
+  report.remove_webhook(params)
+  report.configure_webhook(params, "https://discord.com/api/webhooks/1/token")
+
+
 def test_owner_gate_requires_exact_username_ssh_keys_toggle_and_webhook():
   assert report.reporting_enabled(owner_params())
   assert report.reporting_enabled(owner_params(GithubUsername=" JC01RHO "))
@@ -200,8 +247,9 @@ def test_drive_reporter_creates_one_pending_report_per_started_falling_edge():
 def test_delayed_delivery_cancels_if_device_returns_onroad():
   params = owner_params(IsOnroad=True)
   sleeps = []
-  result = report.deliver_after_offroad_delay(params, delay_s=5, sleep=lambda seconds: sleeps.append(seconds),
-                                                run=lambda *args, **kwargs: pytest.fail("must not send"))
+  result = report.deliver_after_offroad_delay(
+    params, delay_s=5, sleep=lambda seconds: sleeps.append(seconds), run=lambda *args, **kwargs: pytest.fail("must not send")
+  )
   assert sleeps == [5]
   assert result.error == "onroad"
 
