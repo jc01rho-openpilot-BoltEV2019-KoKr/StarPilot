@@ -1,3 +1,5 @@
+import { longitudinalModeLayout, LONGITUDINAL_MODE_KEY } from "/assets/components/tools/longitudinal_mode.mjs"
+import { LongitudinalMode } from "../components/LongitudinalMode.js"
 import { api, showSnackbar } from "../api.js"
 import { navigate, store } from "../store.js"
 import {
@@ -5,13 +7,22 @@ import {
   resolveVehicleUnitParam, slugifySectionName,
 } from "../params.js"
 import { SettingTree } from "../components/SettingTree.js"
+import { PersonalityProfiles } from "../components/PersonalityProfiles.js"
 import { GalaxyToggleCard } from "../components/GalaxyToggleCard.js"
 import { GalaxySection } from "../components/GalaxySection.js"
 import { DevModeBanner } from "../components/DevModeBanner.js"
 
+const LEGACY_PERSONALITY_KEYS = new Set([
+  "AccelerationProfile", "AggressiveFollow", "AggressiveFollowHigh", "CustomAccelProfile",
+  "CustomAccelProfile0MPH", "CustomAccelProfile11MPH", "CustomAccelProfile22MPH", "CustomAccelProfile34MPH",
+  "CustomAccelProfile45MPH", "CustomAccelProfile56MPH", "CustomAccelProfile89MPH", "DecelerationProfile",
+  "EVTuning", "HumanAcceleration", "RelaxedFollow", "RelaxedFollowHigh", "StandardFollow",
+  "StandardFollowHigh", "TrafficFollow", "TruckTuning",
+])
+
 export const Settings = {
   name: "Settings",
-  components: { SettingTree, GalaxyToggleCard, GalaxySection, DevModeBanner },
+  components: { SettingTree, PersonalityProfiles, GalaxyToggleCard, GalaxySection, DevModeBanner, LongitudinalMode },
   data() {
     return {
       layout: [],
@@ -30,7 +41,7 @@ export const Settings = {
         .filter((s) => s.name !== "Model & Customization")
         .map((s) => ({
           ...s,
-          params: (s.params || []).filter((p) => isSettingVisible(s, p, this.values)),
+          params: (s.params || []).filter((p) => !LEGACY_PERSONALITY_KEYS.has(p.key) && isSettingVisible(s, p, this.values)),
           slug: slugifySectionName(s.name),
         }))
         .filter((s) => s.params.length > 0)
@@ -47,17 +58,25 @@ export const Settings = {
     searchResults() {
       if (!this.searchActive) return []
       return this.sections
-        .map((s) => ({ ...s, matches: s.params.filter((p) => this.matchesFilter(p)) }))
+        .map((s) => {
+          const descendants = new Set(["CustomPersonalities"])
+          let size
+          do { size = descendants.size; s.params.forEach(p => { if (descendants.has(p.parent_key)) descendants.add(p.key) }) } while (size !== descendants.size)
+          return { ...s, matches: s.params.filter(p => p.key === "CustomPersonalities" ? s.params.some(child => descendants.has(child.key) && this.matchesFilter(child)) : !descendants.has(p.key) && this.matchesFilter(p)) }
+        })
         .filter((s) => s.matches.length > 0)
     },
   },
   methods: {
+    isModeParam(p) { return p.key === LONGITUDINAL_MODE_KEY || !!p.longitudinal_mode },
+    modeSection(s) { return this.layout.find(section => section.name === s.name && section.params.some(p => p.key === LONGITUDINAL_MODE_KEY)) },
+    ordinaryParams(s) { return s.params.filter(p => !this.isModeParam(p)) },
     async load() {
       try {
         const [layout, values, defaults] = await Promise.all([
           api.getLayout(), api.getParams(), api.getDefaults(),
         ])
-        this.layout = layout
+        this.layout = longitudinalModeLayout(layout)
         this.values = values || {}
         this.defaults = defaults || {}
         if (!this.activeSectionSlug && this.sections.length) {
@@ -133,8 +152,10 @@ export const Settings = {
           </div>
           <template v-for="section in searchResults" :key="section.slug">
             <GalaxySection :title="section.name + ' (' + section.matches.length + ')'" :icon="section.icon || 'bi-search'" :default-open="false">
+              <LongitudinalMode v-if="section.matches.some(isModeParam)" :section="modeSection(section)" :values="values" @change="onParamChange" />
               <template v-for="p in section.matches" :key="p.key">
-                <GalaxyToggleCard :param="p" :value="values[p.key]" :values="values" :locked="lockReason(p) !== ''"
+                <PersonalityProfiles v-if="p.key === 'CustomPersonalities'" :manage-open="!!expanded[p.key]" @manage="toggleManage(p.key)" @change="onParamChange" />
+                <GalaxyToggleCard v-else-if="!isModeParam(p)" :param="p" :value="values[p.key]" :values="values" :locked="lockReason(p) !== ''"
                   @change="onParamChange" />
               </template>
             </GalaxySection>
@@ -155,7 +176,8 @@ export const Settings = {
               <i class="bi" :class="activeSection.icon"></i>
               <span class="gx-section__title">{{ activeSection.name }}</span>
             </div>
-            <SettingTree :params="activeSection.params" :parent-key="null" :values="values"
+            <LongitudinalMode v-if="modeSection(activeSection)" :section="modeSection(activeSection)" :values="values" @change="onParamChange" />
+            <SettingTree :params="ordinaryParams(activeSection)" :parent-key="null" :values="values"
               :expanded="expanded" :lock-reason="lockReason" @change="onParamChange" @manage="toggleManage" />
             <div v-if="!activeSection.params.length" class="gx-empty">No settings in this section.</div>
           </div>

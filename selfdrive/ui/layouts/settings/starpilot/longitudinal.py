@@ -780,7 +780,12 @@ class StarPilotLongitudinalLayout(_SettingsPage):
       SettingRow("PulseGlideSpeedDelta", "value", tr_noop("Pulse and Glide Delta"),
                  subtitle=tr_noop("Developer-only: coast this far below the current cruise target before accelerating back up."),
                  get_value=lambda: f"{self._params.get_float('PulseGlideSpeedDelta'):.1f}{self._speed_unit()}",
-                 on_click=lambda: self._show_slider("PulseGlideSpeedDelta"),
+                 on_click=lambda: self._show_slider("PulseGlideSpeedDelta", 0.5,
+                                                    30.0 if self._is_metric() else 15.0,
+                                                    step=0.5,
+                                                    unit=self._speed_unit(),
+                                                    value_type="float",
+                                                    title="Pulse and Glide Delta"),
                  visible=lambda: self._params.get_bool("QOLLongitudinal") and self._developer_feature_access()),
       SettingRow("MapGears", "toggle", tr_noop("Map Gears"),
                  subtitle="",
@@ -1103,7 +1108,7 @@ class StarPilotLongitudinalLayout(_SettingsPage):
   def _developer_feature_access(self) -> bool:
     return (
       starpilot_state.car_state.hasOpenpilotLongitudinal and
-      (self._params.get_bool("DeveloperUI") or self._params.get_bool("GalaxyDeveloperMode"))
+      (gui_app.big_ui() or self._params.get_bool("DeveloperUI") or self._params.get_bool("GalaxyDeveloperMode"))
     )
 
   def _speed_unit(self) -> str:
