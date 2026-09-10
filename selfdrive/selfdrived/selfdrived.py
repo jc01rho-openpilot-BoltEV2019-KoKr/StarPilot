@@ -34,6 +34,7 @@ from openpilot.system.version import get_build_metadata
 from opendbc.safety import ALTERNATIVE_EXPERIENCE
 from openpilot.common.constants import CV
 from openpilot.starpilot.common.lateral_only_experimental import experimental_mode_available
+from openpilot.starpilot.common.longitudinal_mode import request_mode_refresh
 from openpilot.starpilot.common.vision_bsm import get_fresh_vasm_state
 from openpilot.starpilot.system.wheel_controls import (
   CONTROLLER_ACTION_COUNTERS,
@@ -898,10 +899,10 @@ class SelfdriveD:
 
     self.starpilot_events.add_from_msg(self.sm['starpilotPlan'].starpilotEvents)
 
-    if self.starpilot_toggles.conditional_experimental_mode or getattr(self.starpilot_toggles, "conditional_chill_mode", False):
-      self.experimental_mode = self.sm['starpilotPlan'].experimentalMode
-    else:
-      self.experimental_mode |= self.sm['starpilotPlan'].experimentalMode
+    self.experimental_mode = (not self.safe_mode and experimental_mode_available(self.CP) and (
+      self.sm['starpilotPlan'].experimentalMode if not REPLAY or self.starpilot_toggles.conditional_experimental_mode
+      or getattr(self.starpilot_toggles, "conditional_chill_mode", False)
+      else self.experimental_mode or self.sm['starpilotPlan'].experimentalMode))
 
   def data_sample(self):
     _car_state = messaging.recv_one(self.car_state_sock)
@@ -1045,10 +1046,13 @@ class SelfdriveD:
       self.is_metric = self.params.get_bool("IsMetric")
       self.is_ldw_enabled = self.params.get_bool("IsLdwEnabled")
       self.disengage_on_accelerator = self.params.get_bool("DisengageOnAccelerator")
-      if self.safe_mode:
-        self.experimental_mode = False
-      elif not self.starpilot_toggles.conditional_experimental_mode:
-        self.experimental_mode = self.params.get_bool("ExperimentalMode") and experimental_mode_available(self.CP)
+      if REPLAY:
+        if self.safe_mode:
+          self.experimental_mode = False
+        elif not self.starpilot_toggles.conditional_experimental_mode:
+          self.experimental_mode = self.params.get_bool("ExperimentalMode") and experimental_mode_available(self.CP)
+      else:
+        request_mode_refresh(self.params, self.params_memory, self.starpilot_toggles)
       self.personality = log.LongitudinalPersonality.relaxed if self.safe_mode else self.params.get("LongitudinalPersonality", return_default=True)
       time.sleep(0.1)
 

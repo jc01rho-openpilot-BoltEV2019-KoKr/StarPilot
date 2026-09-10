@@ -348,6 +348,31 @@ def test_toyota_auto_hold_is_galaxy_only():
   assert setting["data_type"] == "bool"
 
 
+def test_cluster_offset_is_in_galaxy_developer_section_only():
+  sections = _params_by_section(_layout())
+  assert "ClusterOffset" not in sections["Vehicle"]
+  setting = sections["Developer"]["ClusterOffset"]
+
+  assert setting["parent_key"] == "GalaxyDeveloperMode"
+  assert setting["settings_tier"] == "advanced"
+  assert setting["data_type"] == "float"
+  assert "1x = no offset" in setting["description"]
+  assert setting["unit"] == "x"
+  assert setting["min"] == 1.0
+  assert setting["max"] == 1.05
+  assert setting["step"] == 0.001
+
+  native_vehicle_settings = REPO_ROOT / "selfdrive/ui/layouts/settings/starpilot/vehicle.py"
+  native_source = native_vehicle_settings.read_text(encoding="utf-8")
+  assert 'SettingRow("ClusterOffset"' not in native_source
+  assert "def _show_offset_selector" not in native_source
+
+  for galaxy_source in (
+    REPO_ROOT / "starpilot/system/the_galaxy/assets/components/tools/device_settings.js",
+    REPO_ROOT / "starpilot/system/the_galaxy/assets/mobile/js/params.js",
+  ):
+    assert "ClusterOffset:" not in galaxy_source.read_text(encoding="utf-8")
+
 def test_human_acceleration_param_is_removed():
   params_source = PARAM_KEYS_PATH.read_text(encoding="utf-8")
   assert '{"HumanAcceleration",' not in params_source

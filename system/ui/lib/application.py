@@ -1260,7 +1260,13 @@ class GuiApplication:
     return x * BURN_IN_SHIFT_PIXELS, y * BURN_IN_SHIFT_PIXELS
 
   def font(self, font_weight: FontWeight = FontWeight.NORMAL) -> rl.Font:
-    return self._fonts[font_weight]
+    try:
+      return self._fonts[font_weight]
+    except KeyError:
+      if font_weight == FontWeight.BRAND:
+        # Brand atlas is header-only decoration; never fail boot for it.
+        return self._fonts[FontWeight.MEDIUM]
+      raise
 
   def font_for_text(self, text: str) -> rl.Font:
     codepoints = tuple(sorted({ord(character) for character in text if character not in "\r\n"}))
@@ -1270,8 +1276,7 @@ class GuiApplication:
     if font is None:
       font_data, font_size = _unifont_bytes()
       cp_buffer = rl.ffi.new("int[]", codepoints)
-      font = rl.load_font_from_memory(".otf", font_data, font_size, DYNAMIC_FONT_SIZE,
-                                      rl.ffi.cast("int *", cp_buffer), len(codepoints))
+      font = rl.load_font_from_memory(".otf", font_data, font_size, DYNAMIC_FONT_SIZE, rl.ffi.cast("int *", cp_buffer), len(codepoints))
       rl.set_texture_filter(font.texture, rl.TextureFilter.TEXTURE_FILTER_BILINEAR)
       self._text_fonts[codepoints] = font
       while len(self._text_fonts) > MAX_DYNAMIC_FONTS:
@@ -1298,14 +1303,26 @@ class GuiApplication:
 
   def _load_fonts(self):
     for font_weight_file in FontWeight:
-      with as_file(FONT_DIR) as fspath:
-        fnt_path = fspath / font_weight_file
-        font = rl.load_font(fnt_path.as_posix())
-        if font_weight_file != FontWeight.UNIFONT:
-          rl.gen_texture_mipmaps(font.texture)
-          rl.set_texture_filter(font.texture, rl.TextureFilter.TEXTURE_FILTER_TRILINEAR)
-        self._fonts[font_weight_file] = font
-    rl.gui_set_font(self._fonts[FontWeight.NORMAL])
+      try:
+        with as_file(FONT_DIR) as fspath:
+          fnt_path = fspath / font_weight_file
+          font = rl.load_font(fnt_path.as_posix())
+          if font_weight_file in (FontWeight.UNIFONT, FontWeight.BRAND):
+            # The brand face is a 2048px header-only atlas: mipmaps cost
+            # startup time with no visible benefit, and one bad face must
+            # not abort the whole UI before first frame (BRAND falls back
+            # to MEDIUM in font()). Same BILINEAR policy as UNIFONT.
+            rl.set_texture_filter(font.texture, rl.TextureFilter.TEXTURE_FILTER_BILINEAR)
+          else:
+            rl.gen_texture_mipmaps(font.texture)
+            rl.set_texture_filter(font.texture, rl.TextureFilter.TEXTURE_FILTER_TRILINEAR)
+          self._fonts[font_weight_file] = font
+      except Exception as e:
+        cloudlog.warning(f"ui: skipping unloadable font {font_weight_file.value}: {e}")
+        continue
+    if not self._fonts:
+      raise RuntimeError("ui: no fonts loaded, cannot start")
+    rl.gui_set_font(self._fonts.get(FontWeight.NORMAL, next(iter(self._fonts.values()))))
 
   def _set_styles(self):
     rl.gui_set_style(rl.GuiControl.DEFAULT, rl.GuiControlProperty.BORDER_WIDTH, 0)
