@@ -346,6 +346,16 @@ wheels = [
 ]
 
 [[package]]
+name = "comma-deps-eigen"
+version = "3.4.0.post102"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f2/d3/2c7b5e9855edbd93d14291996b7a04d54f03c5bf04685bf00c6ac1b8222c/comma_deps_eigen-3.4.0.post102-py3-none-macosx_11_0_arm64.whl", hash = "sha256:41223d85d6614f3c936684f9b315160181bca91b2bb9827ee25e37af97a2fcd8", size = 2272664, upload-time = "2026-09-09T17:09:07.42Z" },
+    { url = "https://files.pythonhosted.org/packages/6f/bd/a025db3ff96282772f19ea3e3db3a9093927f2407e92a028322f126e7fbe/comma_deps_eigen-3.4.0.post102-py3-none-manylinux_2_28_aarch64.whl", hash = "sha256:8819990994fa98decdaacab306c67bd06993f83d54408cd0678dc52e8111b28e", size = 2272672, upload-time = "2026-09-09T17:09:11.203Z" },
+    { url = "https://files.pythonhosted.org/packages/e3/cc/fdce3e2281b52a90b2c6c090984ad12d4a7bf6e44bafd22fc49caa38b867/comma_deps_eigen-3.4.0.post102-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:116332443779fdded244c9e782616da34387e5d16263070779ef155fdc829ab2", size = 2272672, upload-time = "2026-09-09T17:09:15.005Z" },
+]
+
+[[package]]
 name = "comma-deps-ffmpeg"
 version = "7.1.0.post98"
 source = { registry = "https://pypi.org/simple" }
@@ -1616,6 +1626,7 @@ dependencies = [
     { name = "casadi" },
     { name = "cffi" },
     { name = "comma-deps-capnproto", marker = "python_full_version >= '3.12'" },
+    { name = "comma-deps-eigen", marker = "python_full_version >= '3.12'" },
     { name = "comma-deps-ffmpeg", marker = "python_full_version >= '3.12'" },
     { name = "crcmod" },
     { name = "cython" },
@@ -1718,6 +1729,7 @@ requires-dist = [
     { name = "cffi" },
     { name = "codespell", marker = "extra == 'testing'" },
     { name = "comma-deps-capnproto", marker = "python_full_version >= '3.12'" },
+    { name = "comma-deps-eigen", marker = "python_full_version >= '3.12'" },
     { name = "comma-deps-ffmpeg", marker = "python_full_version >= '3.12'" },
     { name = "coverage", marker = "extra == 'testing'" },
     { name = "crcmod" },
