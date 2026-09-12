@@ -93,6 +93,14 @@ class StarPilotLateralLayout(_SettingsPage):
       set_state=lambda s, k=key: self._params.put_bool(k, s),
     )
 
+  def _put_bool_safe(self, key, value):
+    try:
+      self._params.put_bool(key, value)
+    except Exception:
+      # Older on-device builds do not know this key at all
+      # (params_pyx raises UnknownKeyName, not KeyError).
+      return None
+
   def _build_panels(self):
     p = self._params
     cs = starpilot_state.car_state
@@ -218,7 +226,7 @@ class StarPilotLateralLayout(_SettingsPage):
         "NNFF", "toggle", tr_noop("NNFF"),
         subtitle=tr_noop("Neural net feedforward steering controller."),
         get_state=lambda: p.get_bool("NNFF"),
-        set_state=lambda s: (p.put_bool("NNFF", s),
+        set_state=lambda s: (self._put_bool_safe("NNFF", s),
                              s and p.put_bool("NNFFLite", False),
                              _sync_parent(p, "LateralTune", _LATERAL_TUNE_KEYS)),
         enabled=lambda: cs.hasNNFFLog and not cs.isAngleCar,

@@ -682,6 +682,14 @@ class StarPilotVehicleSettingsLayout(_SettingsPage):
     if param_key == "ForceFingerprint":
       self._manager_view._rebuild_toggle_grid()
 
+  def _put_bool_safe(self, key: str, value: bool):
+    try:
+      self._params.put_bool(key, value)
+    except Exception:
+      # Older on-device builds do not know this key at all
+      # (params_pyx raises UnknownKeyName, not KeyError).
+      return None
+
   def _on_panda_firmware_toggle(self, param_key: str, prompt: str):
     current = self._params.get_bool(param_key) if self._params.get(param_key) is not None else False
     new_state = not current
@@ -697,7 +705,7 @@ class StarPilotVehicleSettingsLayout(_SettingsPage):
         starpilot_state.update(force=True)
         self._manager_view._rebuild_toggle_grid()
         return
-      self._params.put_bool(param_key, new_state)
+      self._put_bool_safe(param_key, new_state)
       threading.Thread(target=flash_and_reboot, daemon=True).start()
       starpilot_state.update(force=True)
       self._manager_view._rebuild_toggle_grid()

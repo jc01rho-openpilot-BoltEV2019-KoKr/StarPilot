@@ -6171,7 +6171,7 @@ def setup(app):
         enabled = bool(value.get("enabled", False))
         if enabled and not webhook_status(params)["configured"]:
           return jsonify({"error": "Configure the Discord webhook before enabling reports."}), 400
-        params.put_bool("LowVoltageDiscordReport", enabled)
+        _put_bool_safe("LowVoltageDiscordReport", enabled)
         return jsonify(
           {
             "message": "Low-voltage Discord reporting updated.",
@@ -6677,7 +6677,7 @@ def setup(app):
           params.put(MODEL_LAB_CONFIG_PARAM, lab_config)
           params.remove(MODEL_LAB_RUNTIME_PARAM)
 
-        params.put("Model", selected_model)
+        _put_safe("Model", selected_model)
         params.put("DrivingModel", selected_model)
 
         available_models = [entry.strip() for entry in (params.get("AvailableModels", encoding="utf-8") or "").split(",")]
@@ -6693,16 +6693,16 @@ def setup(app):
 
           if selected_index < len(model_versions) and model_versions[selected_index]:
             resolved_version = model_versions[selected_index]
-            params.put("ModelVersion", resolved_version)
+            _put_safe("ModelVersion", resolved_version)
             params.put("DrivingModelVersion", resolved_version)
           elif is_builtin_model_key(selected_model):
             resolved_version = _default_model_version()
-            params.put("ModelVersion", resolved_version)
+            _put_safe("ModelVersion", resolved_version)
             params.put("DrivingModelVersion", resolved_version)
         elif is_builtin_model_key(selected_model):
           params.put("DrivingModelName", _default_model_name())
           resolved_version = _default_model_version()
-          params.put("ModelVersion", resolved_version)
+          _put_safe("ModelVersion", resolved_version)
           params.put("DrivingModelVersion", resolved_version)
         else:
           # Fallback to cached version map if this model isn't in the current manifest list yet.
@@ -6715,7 +6715,7 @@ def setup(app):
 
                 resolved_version = str(versions[alias]).strip()
                 if resolved_version:
-                  params.put("ModelVersion", resolved_version)
+                  _put_safe("ModelVersion", resolved_version)
                   params.put("DrivingModelVersion", resolved_version)
                   break
           except Exception:
@@ -6724,7 +6724,7 @@ def setup(app):
         profile = "big" if model_uses_external_gpu(selected_model) else "small"
         set_model_profile(params, profile, selected_model)
       elif key in ("ModelVersion", "DrivingModelVersion"):
-        params.put("ModelVersion", str_val)
+        _put_safe("ModelVersion", str_val)
         params.put("DrivingModelVersion", str_val)
       elif key in CUSTOM_ACCEL_PROFILE_PARAM_KEYS:
         params.put(key, str_val)
@@ -6867,7 +6867,7 @@ def setup(app):
     enabled = bool(request_data.get("enabled", False))
     if enabled and not webhook_status(params)["configured"]:
       return jsonify({"error": "Configure the Discord webhook before enabling reports."}), 400
-    params.put_bool("LowVoltageDiscordReport", enabled)
+    _put_bool_safe("LowVoltageDiscordReport", enabled)
     return jsonify(webhook_status(params)), 200
 
   @app.route("/api/params/defaults", methods=["GET"])
@@ -7034,11 +7034,11 @@ def setup(app):
     if not model_key:
       model_key, model_name, model_version = _default_model_key(), _default_model_name(), _default_model_version()
 
-    params.put("Model", model_key)
+    _put_safe("Model", model_key)
     params.put("DrivingModel", model_key)
     params.put("DrivingModelName", model_name or model_key)
     if model_version:
-      params.put("ModelVersion", model_version)
+      _put_safe("ModelVersion", model_version)
       params.put("DrivingModelVersion", model_version)
     return model_name or model_key
 
@@ -7073,12 +7073,12 @@ def setup(app):
     params.remove(MODEL_LAB_RUNTIME_PARAM)
     if config["enabled"]:
       lateral = model_by_key[config["lateralModel"]]
-      params.put("Model", lateral["value"])
+      _put_safe("Model", lateral["value"])
       params.put("DrivingModel", lateral["value"])
       longitudinal = model_by_key[config["longitudinalModel"]]
       params.put("DrivingModelName", model_lab_pair_display_name(lateral["label"], longitudinal["label"]))
       if lateral.get("version"):
-        params.put("ModelVersion", lateral["version"])
+        _put_safe("ModelVersion", lateral["version"])
         params.put("DrivingModelVersion", lateral["version"])
       message = "Model Laboratory enabled. The pair will load on the next drive."
     else:
@@ -7673,6 +7673,20 @@ def setup(app):
     except Exception:
       # Older on-device builds do not know this key at all
       # (params_pyx raises UnknownKeyName, not KeyError).
+      return None
+
+  def _put_safe(key, value):
+    try:
+      params.put(key, value)
+    except Exception:
+      # Older on-device builds do not know this key at all
+      # (params_pyx raises UnknownKeyName, not KeyError).
+      return None
+
+  def _put_bool_safe(key, value):
+    try:
+      params.put_bool(key, value)
+    except Exception:
       return None
 
   def _default_model_key():

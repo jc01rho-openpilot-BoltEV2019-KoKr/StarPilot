@@ -258,7 +258,7 @@ class SystemSettingsManagerView(PanelManagerView):
         "title": tr("Debug Mode"),
         "subtitle": "",
         "get_state": lambda: self._controller._params.get_bool("DebugMode"),
-        "set_state": lambda v: self._controller._params.put_bool("DebugMode", v),
+        "set_state": lambda v: self._put_bool_safe("DebugMode", v),
       },
       {
         "title": tr("Show FPS"),
@@ -327,6 +327,13 @@ class SystemSettingsManagerView(PanelManagerView):
         suppress_background=True,
       )
     )
+
+  def _put_bool_safe(self, key: str, value: bool) -> None:
+    try:
+      self._controller._params.put_bool(key, value)
+    except Exception:
+      # Stale on-device params_pyx builds raise UnknownKeyName for unknown keys.
+      return None
 
   def _tab_subtitle(self, tab_id: str) -> str:
     if tab_id == "basics":

@@ -297,7 +297,7 @@ class StarPilotAppearanceLayout(_SettingsPage):
             SettingRow("PedalsOnUI", "toggle", tr_noop("Pedal Indicators"),
                        subtitle="",
                        get_state=lambda: self._params.get_bool("PedalsOnUI"),
-                       set_state=lambda s: self._params.put_bool("PedalsOnUI", s),
+                       set_state=lambda s: self._put_bool_safe("PedalsOnUI", s),
                        enabled=ol,
                        visible=hud_on),
             SettingRow("DynamicPedalsOnUI", "toggle", tr_noop("Dynamic Pedals"),
@@ -593,6 +593,14 @@ class StarPilotAppearanceLayout(_SettingsPage):
         gui_app.push_widget(dialog)
 
     # ── Widget helpers ──
+
+    def _put_bool_safe(self, key, value):
+        try:
+            self._params.put_bool(key, value)
+        except Exception:
+            # Older on-device builds do not know this key at all
+            # (params_pyx raises UnknownKeyName, not KeyError).
+            pass
 
     def _set_exclusive_pedal(self, key, other_key, state):
         self._params.put_bool(key, state)

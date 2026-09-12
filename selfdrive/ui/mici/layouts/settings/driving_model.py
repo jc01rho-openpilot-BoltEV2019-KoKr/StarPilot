@@ -544,6 +544,14 @@ class DrivingModelBigButton(BigButton):
   def _run_manifest_refresh(self):
     self._get_model_manager().update_models()
 
+  def _put_safe(self, key: str, value: str) -> None:
+    try:
+      self._params.put(key, value)
+    except Exception:
+      # Older on-device builds do not know these keys at all
+      # (params_pyx raises UnknownKeyName, not KeyError).
+      return None
+
   def _switch_model(self, model_key: str):
     entries = {entry.key: entry for entry in self._load_model_entries()}
     entry = entries.get(model_key)
@@ -560,13 +568,13 @@ class DrivingModelBigButton(BigButton):
       self._show_message("Model not downloaded", "Download this model first.", return_to_manager=True)
       return
 
-    self._params.put("Model", entry.key)
+    self._put_safe("Model", entry.key)
     self._params.put("DrivingModel", entry.key)
     self._params.put("DrivingModelName", entry.name)
 
     version = entry.version.strip()
     if version:
-      self._params.put("ModelVersion", version)
+      self._put_safe("ModelVersion", version)
       self._params.put("DrivingModelVersion", version)
     set_model_profile(
       self._params,
