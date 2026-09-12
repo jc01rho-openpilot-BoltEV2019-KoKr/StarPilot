@@ -142,9 +142,17 @@ class MapSpeedLogger:
         "total_bytes": 0,
       })
 
+  def _put_safe(self, key, value):
+    try:
+      self.params.put(key, value)
+    except Exception:
+      # Older on-device builds do not know this key at all
+      # (params_pyx raises UnknownKeyName, not KeyError).
+      return None
+
   def update_params(self, dataset, filtered_dataset):
     self.params.put("OverpassRequests", self.overpass_requests)
-    self.params.put("SpeedLimits", list(dataset))
+    self._put_safe("SpeedLimits", list(dataset))
     self.params.put("SpeedLimitsFiltered", list(filtered_dataset))
 
   def flush_pending_dataset_additions(self, force=False):
@@ -164,7 +172,7 @@ class MapSpeedLogger:
     existing_dataset.extend(self.dataset_additions)
 
     new_dataset = self.cleanup_dataset(existing_dataset)
-    self.params.put("SpeedLimits", list(new_dataset))
+    self._put_safe("SpeedLimits", list(new_dataset))
 
     self.dataset_additions.clear()
     self.last_dataset_flush = now

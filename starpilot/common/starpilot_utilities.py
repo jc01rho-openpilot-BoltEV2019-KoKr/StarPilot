@@ -199,14 +199,20 @@ def extract_zip(zip_file, extract_path):
   print(f"Extraction completed!")
 
 
+def _get_bool_safe(params, key):
+  try:
+    return params.get_bool(key)
+  except Exception:
+    # Older on-device builds do not know this key at all
+    # (params_pyx raises UnknownKeyName, not KeyError).
+    return None
+
+
 def flash_panda(params_memory):
   from openpilot.selfdrive.pandad.rivian_long_flasher import is_rivian_bridge_panda, is_rivian_vehicle
 
   params = Params()
-  try:
-    remote_start = params.get_bool("RemoteStartBootsComma")
-  except Exception:
-    remote_start = False
+  remote_start = _get_bool_safe(params, "RemoteStartBootsComma")
   try:
     hkg_remote_start = params.get_bool("HKGRemoteStartBootsComma")
   except Exception:

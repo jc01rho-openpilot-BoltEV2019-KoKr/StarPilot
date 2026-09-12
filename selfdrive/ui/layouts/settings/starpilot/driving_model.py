@@ -747,6 +747,14 @@ class StarPilotDrivingModelLayout(_SettingsPage):
       # (params_pyx raises UnknownKeyName, not KeyError).
       return None
 
+  def _put_safe(self, key: str, value):
+    try:
+      self._params.put(key, value)
+    except Exception:
+      # Older on-device builds do not know this key at all
+      # (params_pyx raises UnknownKeyName, not KeyError).
+      return None
+
   def _default_model_key(self) -> str:
     default_key = self._get_default_value("Model") or self._get_default_value("DrivingModel")
     if isinstance(default_key, bytes):
@@ -1091,12 +1099,12 @@ class StarPilotDrivingModelLayout(_SettingsPage):
     if selected_model == self._current_model_key:
       return True
 
-    self._params.put("Model", selected_model)
+    self._put_safe("Model", selected_model)
     self._params.put("DrivingModel", selected_model)
     self._params.put("DrivingModelName", entry.name)
     resolved_version = self._selected_model_version(selected_model)
     resolved_version = resolved_version or entry.version or self._default_model_version()
-    self._params.put("ModelVersion", resolved_version)
+    self._put_safe("ModelVersion", resolved_version)
     self._params.put("DrivingModelVersion", resolved_version)
     set_model_profile(
       self._params,

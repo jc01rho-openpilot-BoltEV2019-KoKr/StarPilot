@@ -542,6 +542,14 @@ class StarPilotVariables:
   def get_button_function(self, key, condition=True):
     return self.get_value(key, cast=float, condition=condition)
 
+  def _put_bool_safe(self, key, value):
+    try:
+      self.params.put_bool(key, value)
+    except Exception:
+      # Older on-device builds do not know this key at all
+      # (params_pyx raises UnknownKeyName, not KeyError).
+      return None
+
   def migrate_prius_cluster_offset(self, car_model):
     if car_model not in PRIUS_CLUSTER_OFFSET_CARS or self.params_raw.get_bool(PRIUS_CLUSTER_OFFSET_MIGRATION_KEY):
       return
@@ -692,7 +700,7 @@ class StarPilotVariables:
     hyundai_redneck_available = toggle.car_make == "hyundai" and toggle.redneck_cruise_available
     if toggle.car_make == "hyundai" and (not toggle.redneck_cruise_available or
                                           (toggle.openpilot_longitudinal and FPCP.pcmCruiseSpeed)):
-      self.params.put_bool("RedneckCruise", False)
+      self._put_bool_safe("RedneckCruise", False)
     toggle.redneck_cruise = self.get_value(
       "RedneckCruise",
       condition=hyundai_redneck_available and not toggle.openpilot_longitudinal,
