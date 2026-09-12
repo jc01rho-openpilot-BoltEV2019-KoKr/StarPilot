@@ -62,8 +62,9 @@ export const api = {
     return res.ok ? parse(res) : {}
   },
 
-  updateParam({ key, value, label }) {
+  updateParam({ key, value, label, confirmedPandaFirmwareFlash }) {
     const data = { key, value }
+    if (confirmedPandaFirmwareFlash === true) data.confirmedPandaFirmwareFlash = true
     if (label) data.label = label
     return request("/api/params", { method: "PUT", data })
   },
@@ -71,7 +72,7 @@ export const api = {
   getFlmWorkspace() { return requestOk("/api/flm/workspace", { cache: "no-store" }) },
   getFavoritesSlots() { return request("/api/favorites/slots", { cache: "no-store" }) },
   saveFavoritesSlots(slots) { return request("/api/favorites/slots", { method: "PUT", data: { slots } }) },
-  activateFavoriteAction(key) { return request("/api/favorites/action", { method: "POST", data: { key } }) },
+  activateFavoriteAction(key, value) { return request("/api/favorites/action", { method: "POST", data: { key, ...(value == null ? {} : { value }) } }) },
 
   getDeviceStatus() { return requestOk("/api/device/status") },
   getStats() { return requestOk("/api/stats") },
@@ -184,11 +185,35 @@ export const api = {
 
   getNavigation() { return request("/api/navigation") },
   setNavigation(body) { return request("/api/navigation", { method: "POST", data: body }) },
+  getNavigationFavorites() { return request("/api/navigation/favorite", { cache: "no-store" }) },
+  mapboxSuggest(query, accessToken, sessionToken, context = {}) {
+    const params = new URLSearchParams({ access_token: accessToken, session_token: sessionToken, q: query, limit: "4", ...context })
+    return request(`https://api.mapbox.com/search/searchbox/v1/suggest?${params.toString()}`, { cache: "no-store" })
+  },
+  mapboxRetrieve(mapboxId, accessToken, sessionToken) {
+    const params = new URLSearchParams({ access_token: accessToken, session_token: sessionToken })
+    return request(`https://api.mapbox.com/search/searchbox/v1/retrieve/${encodeURIComponent(mapboxId)}?${params.toString()}`, { cache: "no-store" })
+  },
+  mapboxGeocode(query, accessToken, context = {}) {
+    const params = new URLSearchParams({ access_token: accessToken, q: query, ...context })
+    return request(`https://api.mapbox.com/search/geocode/v6/forward?${params.toString()}`, { cache: "no-store" })
+  },
+  mapboxDirections(from, to, accessToken) {
+    const origin = `${from.longitude},${from.latitude}`
+    const destination = `${to.longitude},${to.latitude}`
+    const params = new URLSearchParams({ geometries: "geojson", annotations: "congestion", overview: "full", alternatives: "true", access_token: accessToken })
+    return request(`https://api.mapbox.com/directions/v5/mapbox/driving-traffic/${origin};${destination}?${params.toString()}`, { cache: "no-store" })
+  },
   getNavigationKeys() { return request("/api/navigation_key") },
   setNavigationKey(body) { return request("/api/navigation_key", { method: "POST", data: body }) },
   navigationFavorite(body) { return request("/api/navigation/favorite", { method: "POST", data: body }) },
   deleteNavigationKey(type) { return request(`/api/navigation_key?type=${encodeURIComponent(type)}`, { method: "DELETE" }) },
 
+  async systemMonitor(signal) {
+    const response = await fetch("/api/system/monitor", { signal, cache: "no-store" })
+    if (!response.ok) throw new Error("System monitor unavailable")
+    return response.json()
+  },
   async backupToggles() {
     const res = await fetch("/api/toggles/backup", { method: "POST" })
     if (!res.ok) {
@@ -273,6 +298,10 @@ export const api = {
 
   getPlotsLive() { return request("/api/plots/live") },
   getGalaxySession() { return request("/api/galaxy/session") },
+
+  getTailscaleInstalled() { return request("/api/tailscale/installed", { cache: "no-store" }) },
+  setupTailscale() { return request("/api/tailscale/setup", { method: "POST" }) },
+  uninstallTailscale() { return request("/api/tailscale/uninstall", { method: "POST" }) },
 
   getThemeList() { return request("/api/themes/list") },
   getThemeDefault() { return request("/api/themes/default") },

@@ -11,6 +11,8 @@ import { PersonalityProfiles } from "../components/PersonalityProfiles.js"
 import { GalaxyToggleCard } from "../components/GalaxyToggleCard.js"
 import { GalaxySection } from "../components/GalaxySection.js"
 import { DevModeBanner } from "../components/DevModeBanner.js"
+import { LanguageSelector } from "../components/LanguageSelector.js"
+import { setLanguage, t } from "../i18n.js"
 
 const LEGACY_PERSONALITY_KEYS = new Set([
   "AccelerationProfile", "AggressiveFollow", "AggressiveFollowHigh", "CustomAccelProfile",
@@ -22,7 +24,7 @@ const LEGACY_PERSONALITY_KEYS = new Set([
 
 export const Settings = {
   name: "Settings",
-  components: { SettingTree, PersonalityProfiles, GalaxyToggleCard, GalaxySection, DevModeBanner, LongitudinalMode },
+  components: { SettingTree, PersonalityProfiles, GalaxyToggleCard, GalaxySection, DevModeBanner, LongitudinalMode, LanguageSelector },
   data() {
     return {
       layout: [],
@@ -68,6 +70,7 @@ export const Settings = {
     },
   },
   methods: {
+    tr(key, fallback = key) { return t(key, fallback) },
     isModeParam(p) { return p.key === LONGITUDINAL_MODE_KEY || !!p.longitudinal_mode },
     modeSection(s) { return this.layout.find(section => section.name === s.name && section.params.some(p => p.key === LONGITUDINAL_MODE_KEY)) },
     ordinaryParams(s) { return s.params.filter(p => !this.isModeParam(p)) },
@@ -78,6 +81,7 @@ export const Settings = {
         ])
         this.layout = longitudinalModeLayout(layout)
         this.values = values || {}
+        setLanguage(this.values.LanguageSetting || "en")
         this.defaults = defaults || {}
         if (!this.activeSectionSlug && this.sections.length) {
           const preferred = this.sections.find((s) => s.slug === this.defaultSectionSlug)
@@ -117,7 +121,7 @@ export const Settings = {
     },
     lockReason(param) {
       if (param?.requires_offroad && this.values.IsOnroad) return "This setting can only be changed while parked."
-      if (param?.requires_parked && !this.values.VehicleParked) return "This setting can only be changed while the vehicle is in Park."
+      if (param?.requires_parked && !this.values.VehicleParked && !(param.key === "ForceOffroad" && this.values.ForceOffroad)) return "This setting can only be changed while the vehicle is in Park."
       if (param?.disabled_when_key_true && this.values[param.disabled_when_key_true]) return param.disabled_reason || "Disabled by another setting."
       if (param?.requires_nonempty_key) {
         const val = this.values[param.requires_nonempty_key]
@@ -136,22 +140,24 @@ export const Settings = {
   },
   template: `
     <div>
-      <h2 style="margin-top:0;">Toggles</h2>
+      <h2 style="margin-top:0;">{{ tr("Toggles") }}</h2>
+
+      <LanguageSelector :device-value="String(values.LanguageSetting || '')" />
 
       <DevModeBanner :hidden-count="hiddenAdvancedCount" :dev-mode-on="devModeOn" />
 
-      <div v-if="loading" class="gx-loading">Loading configuration...</div>
+      <div v-if="loading" class="gx-loading">{{ tr("Loading configuration...") }}</div>
 
       <template v-else-if="sections.length">
         <div v-if="searchActive">
           <div class="gx-card">
             <div class="gx-section__header">
               <i class="bi bi-search"></i>
-              <span class="gx-section__title">{{ searchResults.reduce((n, s) => n + s.matches.length, 0) }} result(s)</span>
+              <span class="gx-section__title">{{ searchResults.reduce((n, s) => n + s.matches.length, 0) }} {{ tr("result(s)") }}</span>
             </div>
           </div>
           <template v-for="section in searchResults" :key="section.slug">
-            <GalaxySection :title="section.name + ' (' + section.matches.length + ')'" :icon="section.icon || 'bi-search'" :default-open="false">
+            <GalaxySection :title="tr(section.name, section.name) + ' (' + section.matches.length + ')'" :icon="section.icon || 'bi-search'" :default-open="false">
               <LongitudinalMode v-if="section.matches.some(isModeParam)" :section="modeSection(section)" :values="values" @change="onParamChange" />
               <template v-for="p in section.matches" :key="p.key">
                 <PersonalityProfiles v-if="p.key === 'CustomPersonalities'" :manage-open="!!expanded[p.key]" @manage="toggleManage(p.key)" @change="onParamChange" />
@@ -167,24 +173,24 @@ export const Settings = {
             <button v-for="s in sections" :key="s.slug" type="button"
               class="gx-chip" :style="s.slug === activeSection.slug ? 'background: var(--primary); color: var(--on-primary);' : 'background: var(--surface-variant); color: var(--on-surface-variant); cursor:pointer;'"
               @click="selectSection(s.slug)">
-              {{ s.name }}
+              {{ tr(s.name, s.name) }}
             </button>
           </div>
 
           <div class="gx-card">
             <div class="gx-section__header">
               <i class="bi" :class="activeSection.icon"></i>
-              <span class="gx-section__title">{{ activeSection.name }}</span>
+              <span class="gx-section__title">{{ tr(activeSection.name, activeSection.name) }}</span>
             </div>
             <LongitudinalMode v-if="modeSection(activeSection)" :section="modeSection(activeSection)" :values="values" @change="onParamChange" />
             <SettingTree :params="ordinaryParams(activeSection)" :parent-key="null" :values="values"
               :expanded="expanded" :lock-reason="lockReason" @change="onParamChange" @manage="toggleManage" />
-            <div v-if="!activeSection.params.length" class="gx-empty">No settings in this section.</div>
+            <div v-if="!activeSection.params.length" class="gx-empty">{{ tr("No settings in this section.") }}</div>
           </div>
         </div>
       </template>
 
-      <div v-else class="gx-empty">No settings available.</div>
+      <div v-else class="gx-empty">{{ tr("No settings available.") }}</div>
     </div>
   `,
 }

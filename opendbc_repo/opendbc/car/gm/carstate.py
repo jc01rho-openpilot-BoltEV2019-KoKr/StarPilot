@@ -18,6 +18,7 @@ from opendbc.car.gm.values import (
   AccState,
   CanBus,
   CruiseButtons,
+  GM_AUTO_HOLD_CARS,
   GMFlags,
   SDGM_CAR,
   STEER_THRESHOLD,
@@ -66,6 +67,18 @@ def update_auto_hold_drive_timers(in_drive_for_hold: bool, moving_for_hold: bool
     one_pedal_drive_time = 0.0
 
   return auto_hold_drive_time, one_pedal_drive_time
+
+
+def is_gm_auto_hold_active(car_fingerprint: str, auto_hold_engaged: bool, in_drive_for_hold: bool,
+                           cruise_available: bool, standstill: bool, gas_pressed: bool) -> bool:
+  return (
+    auto_hold_engaged and
+    car_fingerprint in GM_AUTO_HOLD_CARS and
+    in_drive_for_hold and
+    cruise_available and
+    standstill and
+    not gas_pressed
+  )
 
 
 def update_startup_acc_fault_suppression(car_fingerprint: str, system_power_mode: int,
@@ -430,6 +443,11 @@ class CarState(CarStateBase):
     if self.auto_hold_fault_suppression_timer > 0.0:
       self.auto_hold_fault_suppression_timer = max(self.auto_hold_fault_suppression_timer - DT_CTRL, 0.0)
       ret.accFaulted = False
+
+    ret.brakeHoldActive = is_gm_auto_hold_active(
+      self.CP.carFingerprint, self.auto_hold_engaged, in_drive_for_hold,
+      ret.cruiseState.available, ret.standstill, ret.gasPressed,
+    )
 
     if self.CP.enableBsm and not sdgm_non_volt:
       ret.leftBlindspot = pt_cp.vl["BCMBlindSpotMonitor"]["LeftBSM"] == 1

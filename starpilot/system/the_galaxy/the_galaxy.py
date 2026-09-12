@@ -46,6 +46,7 @@ from openpilot.common.params import ParamKeyFlag, ParamKeyType, Params
 from openpilot.common.realtime import DT_HW
 from openpilot.common.swaglog import cloudlog
 from openpilot.common.time_helpers import system_time_valid
+from openpilot.selfdrive.pandad.panda_firmware import firmware_flags_conflict, supports_tesla_can_wake, validate_tesla_can_wake_firmware
 from openpilot.system.hardware import HARDWARE, PC
 from openpilot.system.hardware.hw import Paths
 from openpilot.system.loggerd.deleter import PRESERVE_ATTR_NAME, PRESERVE_ATTR_VALUE, PRESERVE_COUNT
@@ -293,7 +294,7 @@ _TESTING_GROUND_CUSTOM_RESERVED_INTERVAL_S = 15.0
 _TESTING_GROUND_CUSTOM_RESERVED_PM = None
 _TESTING_GROUND_CUSTOM_RESERVED_LOCK = threading.Lock()
 _TESTING_GROUND_CUSTOM_RESERVED_LAST_PUBLISH_MONO = 0.0
-PANDA_FIRMWARE_TOGGLE_KEYS = {"IgnoreIgnitionLine", "RemoteStartBootsComma", "HKGRemoteStartBootsComma"}
+PANDA_FIRMWARE_TOGGLE_KEYS = {"IgnoreIgnitionLine", "RemoteStartBootsComma", "HKGRemoteStartBootsComma", "TeslaWakeOnCAN"}
 PANDA_FIRMWARE_CONFIRMATION_FIELD = "confirmedPandaFirmwareFlash"
 _PANDA_FLASH_REBOOT_LOCK = threading.Lock()
 _VASM_SNAPSHOT_LOCK = threading.Lock()
@@ -5943,6 +5944,12 @@ def setup(app):
         if not isinstance(raw_slot, dict):
           continue
         key = str(raw_slot.get("key") or "").strip()
+        if key == CONTROLLER_ACTION_SET_SPEED:
+          from openpilot.starpilot.common.controller_actions import controller_speed_bounds
+          minimum, maximum = controller_speed_bounds(params.get_bool("IsMetric"))
+          value = raw_slot.get("value")
+          if type(value) not in (int, float) or not minimum <= value <= maximum:
+            return jsonify(error=f"Favorite #{idx + 1} speed must be between {minimum} and {maximum}."), 400
         if key and key not in eligible_keys:
           return jsonify(error=f"Favorite #{idx + 1} must use a Galaxy-exposed toggle or action."), 400
 
@@ -5956,14 +5963,13 @@ def setup(app):
 
       params.put(FAVORITE_SLOTS_PARAM, slots)
       update_starpilot_toggles()
-      return jsonify(
-        {
-          "message": "Favorite slots saved.",
-          "slots": slots,
-          "options": options,
-          "values": _favorite_slot_values(options),
-        }
-      ), 200
+      return jsonify({
+        "message": "Favorite slots saved.",
+        "slots": slots,
+        "options": options,
+        "values": _favorite_slot_values(options),
+        "is_metric": params.get_bool("IsMetric"),
+      }), 200
 
     slots = normalize_favorite_slots(params.get(FAVORITE_SLOTS_PARAM), params=params, eligible_keys=eligible_keys)
     for slot in slots:
@@ -5971,13 +5977,12 @@ def setup(app):
       if key in option_by_key:
         slot["label"] = option_by_key[key]["label"]
 
-    return jsonify(
-      {
-        "slots": slots,
-        "options": options,
-        "values": _favorite_slot_values(options),
-      }
-    ), 200
+    return jsonify({
+      "slots": slots,
+      "options": options,
+      "values": _favorite_slot_values(options),
+      "is_metric": params.get_bool("IsMetric"),
+    }), 200
 
   @app.route("/api/favorites/values", methods=["GET"])
   def favorite_values():
@@ -5992,7 +5997,7 @@ def setup(app):
     key = str(data.get("key") or "").strip()
     if not is_favorite_action_key(key):
       return jsonify({"error": "Unknown favorite action."}), 400
-    if not trigger_favorite_action(key, params_memory):
+    if not trigger_favorite_action(key, params_memory, params=params, value=data.get("value")):
       return jsonify({"error": "Favorite action failed."}), 400
     return jsonify({"message": "Favorite action sent."}), 200
 
@@ -6386,10 +6391,10 @@ def setup(app):
         ), 200
 
       if key == "ForceOffroad":
-        if not _get_vehicle_parked():
+        enabled = str_val.strip() in ("1", "true", "True")
+        if enabled and not _get_vehicle_parked():
           return jsonify({"error": "Force Offroad is only available while the vehicle is in Park."}), 403
 
-        enabled = str_val.strip() in ("1", "true", "True")
         params.put_bool("ForceOffroad", enabled)
         params.put_bool("ForceOnroad", False)
         update_starpilot_toggles()
@@ -6427,10 +6432,23 @@ def setup(app):
         if params.get_bool("IsOnroad"):
           return jsonify({"error": "Cannot change PiP Side Camera configuration while driving."}), 403
 
+      if key == "TeslaWakeOnCAN" and not supports_tesla_can_wake(params):
+        return jsonify({"error": "Wake on CAN is available only for a detected Tesla Model 3, Y or X."}), 403
+
       if key in PANDA_FIRMWARE_TOGGLE_KEYS and params.get_bool("IsOnroad"):
         return jsonify({"error": "Cannot flash Panda firmware while driving."}), 403
       if key in PANDA_FIRMWARE_TOGGLE_KEYS and data.get(PANDA_FIRMWARE_CONFIRMATION_FIELD) is not True:
         return jsonify({"error": "Panda firmware changes require confirmation before flashing."}), 409
+
+      enabled = str_val.strip() in ("1", "true", "True")
+      if key in PANDA_FIRMWARE_TOGGLE_KEYS and firmware_flags_conflict(params, key, enabled):
+        return jsonify({"error": "Tesla wake cannot be combined with remote-start firmware."}), 409
+
+      if key == "TeslaWakeOnCAN":
+        try:
+          validate_tesla_can_wake_firmware(params, enabled)
+        except RuntimeError as exc:
+          return jsonify({"error": str(exc)}), 409
 
       if key in {"LeadIndicator", "HideLeadMarker"}:
         enabled = str_val.strip() in ("1", "true", "True")
@@ -6815,6 +6833,7 @@ def setup(app):
       except Exception:
         result[key] = None
 
+    result["TeslaCANWakeAvailable"] = supports_tesla_can_wake(params)
     result["HasRadar"] = _get_has_radar()
     result["VehicleParked"] = _get_vehicle_parked()
     result["AlphaLongitudinalAvailable"] = _get_alpha_longitudinal_available()
@@ -6881,6 +6900,23 @@ def setup(app):
         result[key] = None
 
     return jsonify(_sanitize_json_value(result)), 200
+
+  @app.route("/api/system/monitor", methods=["GET"])
+  def system_monitor_snapshot():
+    from openpilot.starpilot.system.the_galaxy.system_monitor import monitor
+    try:
+      # Telemetry is an optional companion; process monitoring works on its own.
+      try:
+        from openpilot.starpilot.system.the_galaxy.external_gpu_vitals import external_gpu_vitals
+      except ImportError:
+        vitals = {}
+      else:
+        vitals = external_gpu_vitals(include_onboard=True)
+      response = jsonify({**monitor.sample(), 'vitals': vitals})
+      response.headers['Cache-Control'] = 'no-store'
+      return response
+    except (OSError, ValueError, IndexError):
+      return jsonify({'error': 'System activity is temporarily unavailable.'}), 503
 
   @app.route("/api/troubleshoot", methods=["GET"])
   def get_troubleshoot_data():
@@ -8603,7 +8639,10 @@ def setup(app):
     except (TypeError, ValueError) as error:
       return jsonify({"error": str(error)}), 400
 
-    started = flm_workspace.start_flm_background_analysis(route_names, FOOTAGE_PATHS, segment_ranges)
+    try:
+      started = flm_workspace.start_flm_background_analysis(route_names, FOOTAGE_PATHS, segment_ranges)
+    except (TypeError, ValueError) as error:
+      return jsonify({"error": str(error)}), 400
     if not started:
       return jsonify({"error": "Failed to start FLM analysis."}), 500
 

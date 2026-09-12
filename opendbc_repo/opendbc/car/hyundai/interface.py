@@ -7,7 +7,6 @@ from opendbc.car.hyundai.values import HyundaiFlags, CAR, CarControllerParams, \
                                                    CANFD_UNSUPPORTED_LONGITUDINAL_CAR, \
                                                    CANFD_SECURITYACCESS_CAR, \
                                                    CANFD_ANGLE_LONGITUDINAL_CAR, \
-                                                   CANFD_RADAR_LIVE_LONGITUDINAL_CAR, \
                                                    CANFD_RADAR_ECU_KEEPALIVE_CAR, \
                                                    RADAR_LIVE_LONGITUDINAL_CAR, \
                                                    UNSUPPORTED_LONGITUDINAL_CAR, HyundaiSafetyFlags, \
