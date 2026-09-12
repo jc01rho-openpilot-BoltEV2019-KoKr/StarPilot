@@ -684,12 +684,20 @@ class DrivingModelBigButton(BigButton):
 
     return entries
 
+  def _get_default_value(self, key: str):
+    try:
+      return self._params.get_default_value(key)
+    except Exception:
+      # Older on-device builds do not know this key at all
+      # (params_pyx raises UnknownKeyName, not KeyError).
+      return None
+
   def _get_current_model_key(self) -> str:
     model_key = self._params.get("Model", encoding="utf-8") or self._params.get("DrivingModel", encoding="utf-8") or ""
     if model_key:
       return model_key
 
-    default_key = self._params.get_default_value("Model") or self._params.get_default_value("DrivingModel")
+    default_key = self._get_default_value("Model") or self._get_default_value("DrivingModel")
     if isinstance(default_key, bytes):
       return default_key.decode("utf-8", errors="ignore").strip()
     return str(default_key or "").strip()
@@ -736,7 +744,7 @@ class DrivingModelBigButton(BigButton):
     return all((MODELS_PATH / get_chunk_name(filename, idx, num_chunks)).is_file() for idx in range(num_chunks))
 
   def _is_builtin_default_model(self, key: str) -> bool:
-    default_key = self._params.get_default_value("DrivingModel") or self._params.get_default_value("Model")
+    default_key = self._get_default_value("DrivingModel") or self._get_default_value("Model")
     if isinstance(default_key, bytes):
       default_key = default_key.decode("utf-8", errors="ignore")
     default_key = str(default_key or "").strip()

@@ -739,20 +739,28 @@ class StarPilotDrivingModelLayout(_SettingsPage):
     self._manifest_fetch_thread = threading.Thread(target=_task, daemon=True)
     self._manifest_fetch_thread.start()
 
+  def _get_default_value(self, key: str):
+    try:
+      return self._params.get_default_value(key)
+    except Exception:
+      # Older on-device builds do not know this key at all
+      # (params_pyx raises UnknownKeyName, not KeyError).
+      return None
+
   def _default_model_key(self) -> str:
-    default_key = self._params.get_default_value("Model") or self._params.get_default_value("DrivingModel")
+    default_key = self._get_default_value("Model") or self._get_default_value("DrivingModel")
     if isinstance(default_key, bytes):
       default_key = default_key.decode("utf-8", errors="ignore")
     return canonical_model_key(str(default_key or "").strip()) or "rdf43"
 
   def _default_model_name(self) -> str:
-    default_name = self._params.get_default_value("DrivingModelName")
+    default_name = self._get_default_value("DrivingModelName")
     if isinstance(default_name, bytes):
       default_name = default_name.decode("utf-8", errors="ignore")
     return _clean_model_name(default_name or "") or "Regret Driven Framework V4"
 
   def _default_model_version(self) -> str:
-    default_version = self._params.get_default_value("ModelVersion") or self._params.get_default_value("DrivingModelVersion")
+    default_version = self._get_default_value("ModelVersion") or self._get_default_value("DrivingModelVersion")
     if isinstance(default_version, bytes):
       default_version = default_version.decode("utf-8", errors="ignore")
     return str(default_version or "").strip() or "v15"
