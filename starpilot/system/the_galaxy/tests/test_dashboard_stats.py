@@ -287,7 +287,7 @@ def _install_server_import_stubs():
     sync_persist_chill_state=lambda *args, **kwargs: None,
     sync_persist_experimental_state=lambda *args, **kwargs: None,
   )
-  def _trigger_stub_favorite_action(key, params_memory=None):
+  def _trigger_stub_favorite_action(key, params_memory=None, **_kwargs):
     if params_memory is None:
       return False
     counter_key = (
@@ -406,6 +406,7 @@ def _install_server_import_stubs():
   sys.modules["openpilot.starpilot.system.wheel_controls"] = _simple_module(
     "openpilot.starpilot.system.wheel_controls",
     CONTROLLER_ACTION_OPTIONS=(
+      {"key": "__starpilot_controller_action__:cycle_driving_personality", "label": "Cycle Driving Personality", "section": "Controller Actions"},
       {"key": "__starpilot_controller_action__:set_speed", "label": "Set Speed To", "section": "Controller Actions", "value_type": "speed"},
       {"key": "__starpilot_controller_action__:selfie", "label": "Take Comma Selfie", "section": "Controller Actions"},
       {"key": "__starpilot_controller_action__:bookmark", "label": "Bookmark", "section": "Controller Actions"},

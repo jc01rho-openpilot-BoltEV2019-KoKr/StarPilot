@@ -326,17 +326,7 @@ def test_wheel_controls_status_includes_favorite_slots(monkeypatch):
   assert len(response.get_json()["slots"]) == 3
   assert len(response.get_json()["controller_slots"]) == 10
   option_keys = {option["key"] for option in response.get_json()["controller_options"]}
-  assert option_keys == {
-    "ForceOffroad",
-    "__starpilot_controller_action__:set_speed",
-    "__starpilot_controller_action__:selfie",
-    "__starpilot_controller_action__:bookmark",
-    "__starpilot_controller_action__:pulse_and_glide",
-    "__starpilot_controller_action__:force_coast",
-    "__starpilot_controller_action__:toggle_aol",
-    "__starpilot_controller_action__:engage_openpilot",
-    "__starpilot_controller_action__:disengage_openpilot",
-  }
+  assert option_keys == {"ForceOffroad"}
   assert response.get_json()["speed_unit"] == "mph"
   assert response.get_json()["disconnect_controllers_offroad"] is False
 
@@ -368,24 +358,16 @@ def test_wheel_controls_configures_a_controller_only_action(monkeypatch):
   response = client.post("/api/wheel-controls/action", json={"slot": 9, "key": "ForceOffroad"})
 
   assert response.status_code == 200
-  expected_keys = {
-    "ForceOffroad",
-    "__starpilot_controller_action__:set_speed",
-    "__starpilot_controller_action__:selfie",
-    "__starpilot_controller_action__:bookmark",
-    "__starpilot_controller_action__:pulse_and_glide",
-    "__starpilot_controller_action__:force_coast",
-    "__starpilot_controller_action__:toggle_aol",
-    "__starpilot_controller_action__:engage_openpilot",
-    "__starpilot_controller_action__:disengage_openpilot",
-  }
+  expected_keys = {"ForceOffroad"}
   assert calls == [((9, "ForceOffroad", "Force Offroad", the_galaxy.params), {"value": None, "eligible_keys": expected_keys})]
 
 
 def test_wheel_controls_configures_set_speed_in_current_units(monkeypatch):
   client, _ = _params_client(monkeypatch, {"IsOffroad": True, "IsMetric": False}, "mici")
   calls = []
-  monkeypatch.setattr(the_galaxy, "_get_available_favorite_slot_options", list)
+  monkeypatch.setattr(the_galaxy, "_get_available_controller_action_options", lambda: [
+    {"key": "__starpilot_controller_action__:set_speed", "label": "Set Speed To", "value_type": "speed"},
+  ])
   monkeypatch.setattr(the_galaxy, "set_controller_action_slot", lambda *args, **kwargs: calls.append((args, kwargs)))
 
   response = client.post("/api/wheel-controls/action", json={
@@ -858,6 +840,22 @@ def test_force_offroad_toggle_rejects_when_not_parked(monkeypatch):
   assert response.status_code == 403
   assert response.get_json()["error"] == "Force Offroad is only available while the vehicle is in Park."
   assert fake_params.writes == []
+
+
+def test_force_offroad_can_be_disabled_without_live_park(monkeypatch):
+  client, fake_params = _params_client(monkeypatch, {
+    "ForceOffroad": True,
+    "ForceOnroad": False,
+    "IsOnroad": False,
+  }, "tici")
+  monkeypatch.setattr(the_galaxy, "_get_vehicle_parked", lambda: False)
+
+  response = client.put("/api/params", json={"key": "ForceOffroad", "value": False})
+
+  assert response.status_code == 200
+  assert response.get_json()["updated"] == {"ForceOffroad": False, "ForceOnroad": False}
+  assert fake_params.values["ForceOffroad"] is False
+  assert fake_params.values["ForceOnroad"] is False
 
 
 def test_curve_speed_controller_reset_clears_learned_data_offroad(monkeypatch):

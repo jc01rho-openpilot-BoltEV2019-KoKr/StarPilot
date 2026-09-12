@@ -11,6 +11,7 @@ from opendbc.car.gm import gmcan
 from opendbc.car.gm.carstate import (
   CarState as GMCarState,
   get_hard_cruise_buttons,
+  is_gm_auto_hold_active,
   update_auto_hold_drive_timers,
   update_startup_acc_fault_suppression,
 )
@@ -210,6 +211,19 @@ class TestBoltGps:
 
 
 class TestGMCarState:
+  @parameterized.expand([
+    (CAR.BUICK_LACROSSE, True, True, True, True, False, True),
+    (CAR.CHEVROLET_VOLT, True, True, True, True, False, True),
+    (CAR.CHEVROLET_BOLT_CC_2017, True, True, True, True, False, False),
+    (CAR.BUICK_LACROSSE, True, True, True, False, False, False),
+    (CAR.BUICK_LACROSSE, True, True, True, True, True, False),
+  ])
+  def test_auto_hold_alert_state_requires_supported_complete_stop(self, car_fingerprint, engaged, in_drive,
+                                                                    cruise_available, standstill, gas_pressed, expected):
+    assert is_gm_auto_hold_active(
+      car_fingerprint, engaged, in_drive, cruise_available, standstill, gas_pressed,
+    ) is expected
+
   def test_lacrosse_startup_acc_fault_is_suppressed(self):
     timer, suppressed = update_startup_acc_fault_suppression(
       CAR.BUICK_LACROSSE, 2, 0, 0.0, 3, False,
@@ -905,7 +919,7 @@ class TestGMCarController:
 
   def test_volt_cc_redneck_rate_limits_setpoint_changes_by_planner_acceleration(self):
     packer = CANPacker(DBC[CAR.CHEVROLET_VOLT_CC][Bus.pt])
-    controller = SimpleNamespace(frame=int(0.5 / DT_CTRL), last_button_frame=0, apply_speed=0, malibu_button_phase=0)
+    controller = SimpleNamespace(frame=int(0.2 / DT_CTRL), last_button_frame=0, apply_speed=0, malibu_button_phase=0)
     cs = SimpleNamespace(
       CP=SimpleNamespace(
         carFingerprint=CAR.CHEVROLET_VOLT_CC,
@@ -921,19 +935,19 @@ class TestGMCarController:
     )
 
     msgs = gmcan.create_gm_cc_spam_command(
-      packer, controller, cs, SimpleNamespace(accel=0.5), SimpleNamespace(is_metric=True),
+      packer, controller, cs, SimpleNamespace(accel=1.0), SimpleNamespace(is_metric=True),
     )
 
     assert msgs == []
 
-    controller.frame = int(0.7 / DT_CTRL)
+    controller.frame = int(0.3 / DT_CTRL)
     msgs = gmcan.create_gm_cc_spam_command(
-      packer, controller, cs, SimpleNamespace(accel=0.5), SimpleNamespace(is_metric=True),
+      packer, controller, cs, SimpleNamespace(accel=1.0), SimpleNamespace(is_metric=True),
     )
 
     assert len(msgs) == 1
 
-  def test_volt_cc_redneck_holds_when_stock_setpoint_is_within_target_deadband(self):
+  def test_volt_cc_redneck_holds_when_pseudo_speed_request_is_within_deadband(self):
     packer = CANPacker(DBC[CAR.CHEVROLET_VOLT_CC][Bus.pt])
     controller = SimpleNamespace(frame=int(2.0 / DT_CTRL), last_button_frame=0, apply_speed=0, malibu_button_phase=0)
     cs = SimpleNamespace(
@@ -958,9 +972,9 @@ class TestGMCarController:
     assert msgs == []
     assert controller.apply_speed == 99
 
-  def test_volt_cc_redneck_catches_up_when_target_exceeds_deadband(self):
+  def test_volt_cc_redneck_uses_smaller_request_deadband_with_lead(self):
     packer = CANPacker(DBC[CAR.CHEVROLET_VOLT_CC][Bus.pt])
-    controller = SimpleNamespace(frame=int(0.5 / DT_CTRL), last_button_frame=0, apply_speed=0, malibu_button_phase=0)
+    controller = SimpleNamespace(frame=int(2.0 / DT_CTRL), last_button_frame=0, apply_speed=0, malibu_button_phase=0)
     cs = SimpleNamespace(
       CP=SimpleNamespace(
         carFingerprint=CAR.CHEVROLET_VOLT_CC,
@@ -970,25 +984,75 @@ class TestGMCarController:
       ),
       buttons_counter=2,
       out=SimpleNamespace(
-        vEgo=90.0 * CV.KPH_TO_MS,
-        cruiseState=SimpleNamespace(speed=90.0 * CV.KPH_TO_MS),
+        vEgo=100.0 * CV.KPH_TO_MS,
+        cruiseState=SimpleNamespace(speed=99.0 * CV.KPH_TO_MS),
         vCruise=100.0,
       ),
     )
 
     msgs = gmcan.create_gm_cc_spam_command(
-      packer, controller, cs, SimpleNamespace(accel=0.5), SimpleNamespace(is_metric=True),
+      packer, controller, cs, SimpleNamespace(accel=0.5), SimpleNamespace(is_metric=True), lead_visible=True,
+    )
+
+    assert len(msgs) == 1
+    assert controller.apply_speed == 100
+
+  def test_volt_cc_redneck_accelerates_when_pseudo_speed_request_exceeds_deadband(self):
+    packer = CANPacker(DBC[CAR.CHEVROLET_VOLT_CC][Bus.pt])
+    controller = SimpleNamespace(frame=int(0.1 / DT_CTRL), last_button_frame=0, apply_speed=0, malibu_button_phase=0)
+    cs = SimpleNamespace(
+      CP=SimpleNamespace(
+        carFingerprint=CAR.CHEVROLET_VOLT_CC,
+        flags=GMFlags.NO_CAMERA.value,
+        networkLocation=structs.CarParams.NetworkLocation.gateway,
+        minEnableSpeed=0.0,
+      ),
+      buttons_counter=2,
+      out=SimpleNamespace(
+        vEgo=44.0 * CV.KPH_TO_MS,
+        cruiseState=SimpleNamespace(speed=44.0 * CV.KPH_TO_MS),
+        vCruise=50.0,
+      ),
+    )
+
+    msgs = gmcan.create_gm_cc_spam_command(
+      packer, controller, cs, SimpleNamespace(accel=2.0), SimpleNamespace(is_metric=True),
     )
 
     assert msgs == []
 
-    controller.frame = int(0.7 / DT_CTRL)
+    controller.frame = int(0.3 / DT_CTRL)
     msgs = gmcan.create_gm_cc_spam_command(
-      packer, controller, cs, SimpleNamespace(accel=0.5), SimpleNamespace(is_metric=True),
+      packer, controller, cs, SimpleNamespace(accel=2.0), SimpleNamespace(is_metric=True),
     )
 
     assert len(msgs) == 1
-    assert controller.apply_speed == 91
+    assert controller.apply_speed == 45
+
+  def test_volt_cc_redneck_brakes_when_pseudo_speed_request_exceeds_deadband(self):
+    packer = CANPacker(DBC[CAR.CHEVROLET_VOLT_CC][Bus.pt])
+    controller = SimpleNamespace(frame=int(0.3 / DT_CTRL), last_button_frame=0, apply_speed=0, malibu_button_phase=0)
+    cs = SimpleNamespace(
+      CP=SimpleNamespace(
+        carFingerprint=CAR.CHEVROLET_VOLT_CC,
+        flags=GMFlags.NO_CAMERA.value,
+        networkLocation=structs.CarParams.NetworkLocation.gateway,
+        minEnableSpeed=0.0,
+      ),
+      buttons_counter=2,
+      out=SimpleNamespace(
+        vEgo=50.7 * CV.KPH_TO_MS,
+        cruiseState=SimpleNamespace(speed=49.0 * CV.KPH_TO_MS),
+        vCruise=50.0,
+      ),
+    )
+
+    msgs = gmcan.create_gm_cc_spam_command(
+      packer, controller, cs, SimpleNamespace(accel=-1.36), SimpleNamespace(is_metric=True),
+    )
+
+    assert len(msgs) == 1
+    assert controller.apply_speed == 48
 
   def test_volt_cc_no_camera_redneck_spam_stays_on_powertrain_bus(self):
     packer = CANPacker(DBC[CAR.CHEVROLET_VOLT_CC][Bus.pt])

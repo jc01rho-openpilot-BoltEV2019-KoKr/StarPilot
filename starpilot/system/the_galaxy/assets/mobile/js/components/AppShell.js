@@ -1,6 +1,7 @@
 import { store, navigate, goBack, toolHref, toggleTheme } from "../store.js"
 import { api } from "../api.js"
 import { usePolling } from "../composables.js"
+import { languageState, setLanguage, t } from "../i18n.js"
 
 const NAV = {
   recordings: [
@@ -37,7 +38,7 @@ export const AppShell = {
   },
   computed: {
     online() { return store.online },
-    statusLabel() { return store.online ? store.deviceStatus : "Offline" },
+    statusLabel() { return store.online ? t(store.deviceStatus, store.deviceStatus) : t("Offline") },
     isLight() { return store.theme === "light" },
     drawerOpen: {
       get() { return store.drawerOpen },
@@ -57,6 +58,7 @@ export const AppShell = {
     },
   },
   methods: {
+    tr(key, fallback = key) { return t(key, fallback) },
     closeDrawer() { store.drawerOpen = false },
     back() { goBack() },
     async refreshStatus() {
@@ -67,6 +69,14 @@ export const AppShell = {
         store.deviceStatus = String(payload.status || "Parked")
       } catch (e) {
         store.online = false
+      }
+    },
+    async loadLanguage() {
+      try {
+        const values = await api.getParams()
+        setLanguage(values?.LanguageSetting || languageState.code || "en")
+      } catch (e) {
+        setLanguage(languageState.code || "en")
       }
     },
     clearSearch() {
@@ -89,6 +99,7 @@ export const AppShell = {
     },
   },
   created() {
+    this.loadLanguage()
     this.statusPoll = usePolling(() => this.refreshStatus(), { interval: 5000 })
     this.statusPoll.start()
   },
@@ -98,21 +109,21 @@ export const AppShell = {
   template: `
     <div class="gx-app">
       <header class="gx-appbar">
-        <button type="button" class="gx-icon-btn gx-appbar__back gx-back-btn" aria-label="Back" @click="back">
+        <button type="button" class="gx-icon-btn gx-appbar__back gx-back-btn" :aria-label="tr('Back')" @click="back">
           <i class="bi bi-arrow-left"></i>
         </button>
         <div class="gx-appbar__pill">
-          <button type="button" class="gx-icon-btn gx-menu-btn" aria-label="Menu" @click="store.drawerOpen = true">
+          <button type="button" class="gx-icon-btn gx-menu-btn" :aria-label="tr('Menu')" @click="store.drawerOpen = true">
             <i class="bi bi-list"></i>
           </button>
           <span class="gx-appbar__home" role="button" tabindex="0"
-            aria-label="Galaxy home" @click="goHome" @keydown.enter="goHome" @keydown.space.prevent="goHome">
+            :aria-label="tr('Galaxy home')" @click="goHome" @keydown.enter="goHome" @keydown.space.prevent="goHome">
             <span class="gx-appbar__title">Galaxy</span>
           </span>
           <div class="gx-searchwrap">
-            <input ref="searchInput" class="gx-search gx-appbar__search" type="search" placeholder="Search toggles..."
-              v-model="search" aria-label="Search toggles" />
-            <button v-if="search" type="button" class="gx-search-clear" aria-label="Clear search" @click="clearSearch">
+            <input ref="searchInput" class="gx-search gx-appbar__search" type="search" :placeholder="tr('Search toggles...')"
+              v-model="search" :aria-label="tr('Search toggles')" />
+            <button v-if="search" type="button" class="gx-search-clear" :aria-label="tr('Clear search')" @click="clearSearch">
               <i class="bi bi-x"></i>
             </button>
           </div>
@@ -123,8 +134,8 @@ export const AppShell = {
             </span>
           </div>
         </div>
-        <button type="button" class="gx-icon-btn gx-theme-toggle" :aria-label="isLight ? 'Switch to dark mode' : 'Switch to light mode'"
-          :title="isLight ? 'Dark mode' : 'Light mode'" @click="themeToggle">
+        <button type="button" class="gx-icon-btn gx-theme-toggle" :aria-label="isLight ? tr('Switch to dark mode') : tr('Switch to light mode')"
+          :title="isLight ? tr('Dark mode') : tr('Light mode')" @click="themeToggle">
           <i class="bi" :class="isLight ? 'bi-moon-stars-fill' : 'bi-sun-fill'"></i>
         </button>
       </header>
@@ -135,24 +146,24 @@ export const AppShell = {
       <aside class="gx-drawer" :class="{ open: store.drawerOpen }">
         <div class="gx-drawer__header">
           <img class="gx-logo" src="/assets/images/main_logo.png" alt="Galaxy logo" />
-          <span class="gx-drawer-title">Galaxy</span>
+          <span class="gx-drawer-title">{{ tr("Galaxy") }}</span>
         </div>
         <div class="gx-nav-section">
-          <div class="gx-nav-section__title">Main</div>
+          <div class="gx-nav-section__title">{{ tr("Main") }}</div>
           <a class="gx-nav-item" :class="{ active: isActive('/') }" @click.prevent="navTo('/')">
-            <i class="bi bi-house-fill"></i><span>Home</span>
+            <i class="bi bi-house-fill"></i><span>{{ tr("Home") }}</span>
           </a>
           <a class="gx-nav-item" :class="{ active: isActive('/settings') }" @click.prevent="navTo('/settings')">
-            <i class="bi bi-toggle-on"></i><span>Toggles</span>
+            <i class="bi bi-toggle-on"></i><span>{{ tr("Toggles") }}</span>
           </a>
           <a class="gx-nav-item" :class="{ active: isActive('/tools') }" @click.prevent="navTo('/tools')">
-            <i class="bi bi-tools"></i><span>Tools</span>
+            <i class="bi bi-tools"></i><span>{{ tr("Tools") }}</span>
           </a>
         </div>
         <div v-for="(links, section) in NAV" :key="section" class="gx-nav-section">
-          <div class="gx-nav-section__title">{{ section }}</div>
+          <div class="gx-nav-section__title">{{ tr(section === 'recordings' ? 'Recordings' : 'Tools') }}</div>
           <a v-for="link in links" :key="link.link" class="gx-nav-item" @click.prevent="navTo(link.link)">
-            <i class="bi" :class="link.icon"></i><span>{{ link.name }}</span>
+            <i class="bi" :class="link.icon"></i><span>{{ tr(link.name, link.name) }}</span>
           </a>
         </div>
       </aside>
@@ -166,7 +177,7 @@ export const AppShell = {
           class="nav-item" :class="{ active: isActive(item.link) }"
           @click="bottomNavTo(item)">
           <i class="bi" :class="item.icon"></i>
-          <span>{{ item.name }}</span>
+          <span>{{ tr(item.name, item.name) }}</span>
         </button>
       </nav>
     </div>

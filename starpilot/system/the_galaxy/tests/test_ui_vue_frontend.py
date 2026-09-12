@@ -24,6 +24,7 @@ def test_ui_app_shell_files_exist():
     "js/store.js",
     "js/api.js",
     "js/params.js",
+    "js/i18n.js",
     "js/components/AppShell.js",
     "js/components/GalaxyModal.js",
     "js/components/GalaxySection.js",
@@ -35,6 +36,7 @@ def test_ui_app_shell_files_exist():
     "js/components/WheelControls.js",
     "js/components/BluetoothPanel.js",
     "js/components/DevModeBanner.js",
+    "js/components/LanguageSelector.js",
     "js/composables.js",
     "js/views/Home.js",
     "js/views/Settings.js",
@@ -71,6 +73,19 @@ def test_ui_uses_same_backend_endpoints():
   assert '"/api/params/all"' in api
   assert '"/api/params"' in api
   assert '"/api/params/defaults"' in api
+
+
+def test_ui_language_selector_uses_shared_device_language_setting():
+  i18n = _read("js/i18n.js")
+  selector = _read("js/components/LanguageSelector.js")
+  settings = _read("js/views/Settings.js")
+
+  for code in ["en", "es", "fr", "ko", "zh-CHS"]:
+    assert f'value: "{code}"' in i18n
+  assert "localStorage" in i18n
+  assert "LanguageSetting" in selector
+  assert "main_${next}" in selector
+  assert "<LanguageSelector" in settings
 
 
 def test_ui_ports_developer_mode_gating():
@@ -121,7 +136,7 @@ def test_ui_ports_all_tool_views():
     "js/views/Logs.js": ["getErrorLogs", "tmuxSnapshot"],
     "js/components/TroubleshootPanel.js": ["getTroubleshoot", "resetTroubleshootSection", "GalaxyConfirm"],
     "js/views/Tuning.js": ["LateralTuningPanel"],
-    "js/views/Navigation.js": ["getNavigation", "setNavigation", "MapsPanel", "NavigationKeysPanel"],
+    "js/views/Navigation.js": ["NavigationDestinationPanel", "MapsPanel", "NavigationKeysPanel"],
     "js/views/ToolEmbed.js": ["/manage_maps", "/manage_navigation_keys"],
     "js/views/SystemTools.js": [
       "backupToggles", "restoreToggles", "getToggleProfiles", "saveToggleProfile", "loadToggleProfile", "getUpdateBranches", "factoryReset",
@@ -461,6 +476,10 @@ def test_ui_all_remaining_classic_tools_native_no_embed():
   tuning = _read("js/views/Tuning.js")
   assert "GalaxyEmbed" not in tuning and "LateralTuningPanel" in tuning
   assert _read("js/components/MapsPanel.js") and _read("js/components/NavigationKeysPanel.js")
+  destination = _read("js/components/NavigationDestinationPanel.js")
+  assert "mapboxSuggest" in destination and "mapboxRetrieve" in destination
+  assert "mapboxGeocode" in destination and "mapboxDirections" in destination
+  assert "ref=\"map\"" in destination and "setNavigation(this.destination)" in destination
   assert _read("js/components/LateralTuningPanel.js")
 
   # Shared API surface added for the second batch of ported pages.
@@ -478,6 +497,20 @@ def test_ui_all_remaining_classic_tools_native_no_embed():
   for rel in ["js/components/MapsPanel.js", "js/components/NavigationKeysPanel.js",
               "js/components/LateralTuningPanel.js"]:
     assert "fetch(" not in _read(rel), f"{rel} should not use raw fetch()"
+
+  lateral = _read("js/components/LateralTuningPanel.js")
+  modal = _read("js/components/GalaxyModal.js")
+  assert "MAX_SEGMENTS = 5" in lateral
+  assert "segmentRanges" in lateral and "selectedSegmentRanges" in lateral
+  assert "flmAnalyze(this.selectedRoutes, this.selectedSegmentRanges())" in lateral
+  assert "routeSelectedSegmentCount" in lateral
+  assert "GalaxyPrompt" in lateral
+  assert "renameSavedTune(tune)" in lateral
+  assert "initialValue: tune.name" in lateral
+  assert "export function GalaxyPrompt" in modal
+  assert "inputRequired" in modal
+  assert lateral.index('>Workspace status</span>') < lateral.index('>Saved Tunes</span>')
+  assert lateral.index('>Saved Tunes</span>') < lateral.index('>Local Routes</span>')
 
 
 def test_ui_cameras_hub_vasm_and_pip_native_no_embed():

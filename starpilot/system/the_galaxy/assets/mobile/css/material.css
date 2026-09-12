@@ -796,6 +796,8 @@ body.is-scrolling .gx-tile {
   white-space: nowrap;
 }
 
+.gx-row__actions { align-self: flex-end; display: flex; flex-wrap: wrap; gap: 6px; }
+
 .gx-row.disabled .gx-row__label, .gx-row.disabled .gx-row__desc { opacity: 0.45; }
 .gx-row--favorites { align-items: stretch; flex-direction: column; }
 .gx-row--favorites .gx-row__info { flex: none; }
@@ -1045,6 +1047,8 @@ input[type="color"].gx-color {
 .gx-btn--danger:hover { background: #ff6b8b; }
 [data-theme="light"] .gx-btn--danger:hover { background: #e04b6f; }
 
+.gx-btn--icon { min-height: 36px; min-width: 36px; padding: 0; }
+
 .gx-tabs {
   display: flex;
   flex-wrap: wrap;
@@ -1152,6 +1156,20 @@ input[type="color"].gx-color {
   font-size: var(--fs-xs);
   font-weight: var(--fw-bold);
   padding: 3px 10px;
+}
+
+button.gx-chip {
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--surface-container-high);
+  border: 1px solid var(--glass-border);
+  color: var(--on-surface-variant);
+  cursor: pointer;
+  font-family: var(--font-body);
+}
+
+button.gx-chip:hover {
+  background: var(--glass-bg-hover);
 }
 
 .gx-chip--advanced {
@@ -1371,7 +1389,7 @@ input[type="color"].gx-color {
    sibling of gx-sheet so confirm dialogs keep their centered look. */
 .gx-scrim--bottomsheet {
   align-items: flex-end;
-  padding: var(--sp-4) 0 calc(var(--bottomnav-height) + var(--sp-3));
+  padding: var(--sp-4) 0 0;
 }
 
 .gx-scrim--bottomsheet .gx-sheet {
@@ -1443,7 +1461,224 @@ input[type="color"].gx-color {
   display: block;
   margin: 0 auto;
   max-height: 48dvh;
+  /* Give native controls their own stacking layer above the sheet background. */
+  position: relative;
   width: 100%;
+  z-index: 1;
+}
+
+.gx-video-segment-controls {
+  align-items: center;
+  display: flex;
+  gap: var(--sp-2);
+  justify-content: center;
+}
+
+.gx-video-segment-select {
+  flex: 0 1 240px;
+}
+
+/* Custom dropdown standing in for a native <select>: Android renders a native
+   select as a full-screen wall of options with no way to restyle it, so segment
+   picking gets its own small themed menu instead, consistent on every platform. */
+.gx-segment-picker {
+  position: relative;
+}
+
+.gx-segment-picker__trigger {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  box-sizing: border-box;
+  color: var(--on-surface);
+  cursor: pointer;
+  display: flex;
+  font-family: var(--font-body);
+  font-size: var(--fs-base);
+  justify-content: space-between;
+  min-height: 46px;
+  padding: 0 var(--sp-3);
+  width: 100%;
+}
+
+.gx-segment-picker__trigger:hover { background: rgba(255, 255, 255, 0.1); }
+
+.gx-segment-picker__menu {
+  background: var(--surface-container-high);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  bottom: calc(100% + 4px);
+  box-shadow: var(--elev-3);
+  left: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  padding: var(--sp-1);
+  position: absolute;
+  width: 100%;
+  z-index: 2;
+}
+
+[data-theme="light"] .gx-segment-picker__menu {
+  border: 1.5px solid var(--primary);
+}
+
+.gx-segment-picker__item {
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--on-surface);
+  cursor: pointer;
+  display: block;
+  font-family: var(--font-body);
+  font-size: var(--fs-sm);
+  padding: var(--sp-2) var(--sp-3);
+  text-align: left;
+  width: 100%;
+}
+
+.gx-segment-picker__item:hover { background: var(--glass-bg-hover); }
+
+.gx-segment-picker__item.active {
+  background: var(--primary-container);
+  color: var(--on-primary-container);
+  font-weight: var(--fw-bold);
+}
+
+.gx-route-logs-section {
+  scroll-margin-top: calc(var(--appbar-height) + var(--sp-3));
+}
+
+.gx-route-logs-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.gx-route-logs-title .gx-section__title {
+  display: block;
+}
+
+.gx-route-logs-summary {
+  color: var(--text-muted);
+  display: block;
+  font-size: var(--fs-xs);
+  margin-top: 2px;
+}
+
+.gx-recordings-preserved-chip {
+  display: block;
+  line-height: 1.2;
+  margin-top: var(--sp-1);
+  padding: 2px 7px;
+  vertical-align: middle;
+  width: max-content;
+}
+
+.gx-recordings-row--preserved .gx-row__actions {
+  align-self: center;
+}
+
+.gx-video-player-header {
+  border-radius: var(--radius-md);
+}
+
+.gx-route-logs-download {
+  order: 2;
+}
+
+.gx-route-logs-close {
+  order: 3;
+}
+
+@media (max-width: 767px) {
+  .gx-video-actions {
+    justify-content: center;
+    margin-top: var(--sp-2);
+  }
+
+  .gx-video-download {
+    margin-left: 0 !important;
+  }
+
+  .gx-recordings-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "name name"
+      "details actions"
+      "preserved preserved";
+    row-gap: var(--sp-1);
+  }
+
+  .gx-recordings-row .gx-row__info {
+    display: contents;
+  }
+
+  .gx-recordings-row .gx-row__label {
+    grid-area: name;
+  }
+
+  .gx-recordings-row .gx-row__desc {
+    grid-area: details;
+    margin-top: 0;
+  }
+
+  .gx-recordings-row .gx-recordings-preserved-chip {
+    grid-area: preserved;
+    justify-self: start;
+    margin-top: 0;
+  }
+
+  .gx-recordings-row .gx-row__actions {
+    align-self: center;
+    grid-area: actions;
+    justify-content: flex-end;
+  }
+
+  .gx-screen-recordings-row {
+    grid-template-columns: 84px minmax(0, 1fr) auto;
+    grid-template-areas:
+      "thumbnail name name"
+      "thumbnail details actions";
+  }
+
+  .gx-screen-recordings-row .gx-recording-row-thumb {
+    grid-area: thumbnail;
+  }
+
+  .gx-route-logs-header {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: var(--sp-2);
+  }
+
+  .gx-route-logs-close {
+    order: 1;
+  }
+
+  .gx-route-logs-download {
+    flex: 1 1 100%;
+    justify-content: center;
+    order: 2;
+  }
+
+  .gx-route-delete-actions {
+    flex-wrap: nowrap !important;
+  }
+
+  .gx-route-delete-btn {
+    flex: 1 1 0;
+    font-size: var(--fs-xs);
+    line-height: 1.2;
+    min-width: 0;
+    padding-left: var(--sp-2);
+    padding-right: var(--sp-2);
+    overflow-wrap: anywhere;
+    text-align: center;
+    white-space: normal;
+  }
 }
 
 .gx-view, .gx-embed {
@@ -1639,3 +1874,25 @@ input[type="color"].gx-color {
   .gx-back-btn { display: none; }
   .gx-content { padding-bottom: var(--sp-6); }
 }
+
+/* Read-only task manager, shared by phone and desktop layouts. */
+.gx-monitor__toolbar, .gx-monitor__filters { display:flex; gap:12px; align-items:center; justify-content:space-between; margin-bottom:12px; flex-wrap:wrap; }
+.gx-monitor__summary { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; }
+.gx-monitor__metric { padding:16px; margin:0; display:flex; flex-direction:column; gap:6px; position:relative; overflow:hidden; }
+.gx-monitor__metric > span, .gx-monitor__metric small { color:var(--text-muted); }
+.gx-monitor__metric strong { font-size:26px; }
+.gx-monitor__graph { height:32px; width:100%; color:var(--primary); }
+.gx-monitor progress { width:100%; height:6px; accent-color:var(--primary); }
+.gx-monitor__cores { padding:14px; margin:12px 0; }
+.gx-monitor__cores summary { cursor:pointer; }
+.gx-monitor__cores > div { display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:16px; padding-top:12px; }
+.gx-monitor__cores span { font-size:12px; display:flex; flex-wrap:wrap; justify-content:space-between; gap:6px; }
+.gx-monitor__filters input { flex:1; min-width:180px; }
+.gx-monitor__table { overflow:auto; max-height:65vh; }
+.gx-monitor table { width:100%; border-collapse:collapse; font-size:13px; font-variant-numeric:tabular-nums; }
+.gx-monitor th { position:sticky; top:0; background:var(--surface); z-index:1; text-align:left; }
+.gx-monitor th button { background:transparent; color:inherit; border:0; font:inherit; font-weight:600; cursor:pointer; padding:12px; white-space:nowrap; }
+.gx-monitor td { padding:10px 12px; border-top:1px solid var(--border-color,rgba(128,128,128,.15)); white-space:nowrap; }
+.gx-monitor td:first-child { min-width:180px; max-width:350px; white-space:normal; overflow-wrap:anywhere; }
+.gx-monitor tbody tr:hover { background:var(--surface); }
+@media(max-width:600px) { .gx-monitor__summary { grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; } .gx-monitor__metric { padding:12px; } .gx-monitor__metric strong { font-size:22px; } }
